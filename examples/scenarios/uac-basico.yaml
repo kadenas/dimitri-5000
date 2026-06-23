@@ -1,0 +1,39 @@
+# Escenario UAC: lanza una llamada básica y la cuelga tras una pausa.
+# Recv explícito: se declara cada mensaje esperado (100/180 son opcionales).
+name: uac-llamada-basica
+role: uac
+description: "Llamada básica INVITE -> 200 -> ACK -> BYE"
+
+defaults:
+  transport: udp
+  recv_timeout: 5s
+
+variables:
+  caller: "1000"
+  callee: "2000"
+  domain: "{remote_host}"   # placeholder interno: host del destino
+
+steps:
+  - send: INVITE
+    headers:
+      From: "sip:{caller}@{domain}"
+      To: "sip:{callee}@{domain}"
+    body: sdp_oferta
+
+  - recv: "100"
+    optional: true
+  - recv: "180"
+    optional: true
+  - recv: "200"
+    save:
+      remote_tag: "{header:To;tag}"
+
+  - send: ACK
+  - pause: 3s
+  - send: BYE
+  - recv: "200"
+
+bodies:
+  sdp_oferta:
+    type: sdp
+    media: g711   # alias de media; en la Fase 5 podrá apuntar a un audio real

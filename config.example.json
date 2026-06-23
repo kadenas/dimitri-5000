@@ -1,5 +1,7 @@
 {
   "bind_ip": "192.168.1.50",
+  "sip_port": 5060,
+  "transport": "UDP",
   "monitor": {
     "interval_seconds": 5,
     "timeout_seconds": 2,

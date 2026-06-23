@@ -84,13 +84,21 @@ responsabilidad y comentarios en español explicando el porqué.
 
 ## Ejecución local
 
-Requiere Go 1.23+ instalado.
+Requiere Go 1.23+ instalado. Selector de modo con `--mode`:
 
 ```
-go run . --config config.json --web 127.0.0.1:8080
+# Monitor (faro de OPTIONS + web)
+go run . --mode monitor --web 127.0.0.1:8080
+
+# Recibir llamadas (UAS)
+go run . --mode uas --bind-ip 127.0.0.1 --sip-port 5060
+
+# Lanzar una llamada (UAC)
+go run . --mode uac --bind-ip 127.0.0.1 --sip-port 5062 --to sip:127.0.0.1:5060 --hold 5s
 ```
 
-(En la v0 actual arranca el faro de OPTIONS y la web de estado.)
+La IP de señalización (`--bind-ip`) se autodetecta de la tarjeta de red si se deja
+vacía; el puerto por defecto es 5060 y el transporte UDP (`--transport tcp` para TCP).
 
 ## Despliegue
 
@@ -100,7 +108,10 @@ Ver `DESPLIEGUE.md`.
 
 - **v0 (base):** núcleo SIP que envía OPTIONS (UAC), faro de monitorización con una
   goroutine por troncal, web local que muestra estado por polling. Compila y arranca.
-- **En curso:** Fase 1 — núcleo de señalización UAC/UAS para llamadas INVITE completas.
+- **Fase 1 (completa):** núcleo de señalización UAC/UAS para llamadas INVITE completas,
+  con modo manual CLI (`--mode uas|uac`), transporte UDP/TCP y autodetección de la IP de
+  la tarjeta de red. Verificado con UAC↔UAS en el mismo PC.
+- **En curso / siguiente:** Fase 2 — motor de escenarios.
 
 ## Plan por fases
 

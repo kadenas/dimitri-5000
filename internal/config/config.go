@@ -41,18 +41,20 @@ func (m MonitorConfig) Timeout() time.Duration {
 
 // Config es la configuración completa de la aplicación.
 type Config struct {
-	BindIP  string        `json:"bind_ip"`  // IP local de origen para el SIP (Via/Contact)
-	SIPPort int           `json:"sip_port"` // puerto SIP local (escucha UAS y origen UAC). 5060 por defecto
-	Targets []Target      `json:"targets"`
-	Monitor MonitorConfig `json:"monitor"`
+	BindIP    string        `json:"bind_ip"`   // IP local de origen para el SIP (Via/Contact). Vacío = autodetectar
+	SIPPort   int           `json:"sip_port"`  // puerto SIP local (escucha UAS y origen UAC). 5060 por defecto
+	Transport string        `json:"transport"` // transporte de señalización: "UDP" o "TCP". UDP por defecto
+	Targets   []Target      `json:"targets"`
+	Monitor   MonitorConfig `json:"monitor"`
 }
 
 // defaults devuelve una configuración mínima y razonable para arrancar SIN
 // fichero (útil para una primera prueba en local).
 func defaults() Config {
 	return Config{
-		BindIP:  "127.0.0.1",
-		SIPPort: 5060, // puerto SIP estándar
+		BindIP:    "",    // vacío = autodetectar la IP de la tarjeta de red
+		SIPPort:   5060,  // puerto SIP estándar
+		Transport: "UDP", // transporte por defecto
 		Monitor: MonitorConfig{
 			IntervalSeconds: 5,
 			TimeoutSeconds:  2,

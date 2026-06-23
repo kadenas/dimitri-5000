@@ -1,0 +1,24 @@
+# Escenario UAS: recibe una llamada, la contesta y espera el BYE.
+name: uas-contesta
+role: uas
+description: "Recibe INVITE, responde 180 + 200, espera ACK y BYE"
+
+defaults:
+  transport: udp
+  recv_timeout: 30s
+
+steps:
+  - recv: INVITE
+    save:
+      origen: "{header:From}"
+  - send: "180"
+  - send: "200"
+    body: sdp_respuesta
+  - recv: ACK
+  - recv: BYE
+  - send: "200"
+
+bodies:
+  sdp_respuesta:
+    type: sdp
+    media: g711
