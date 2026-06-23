@@ -1,7 +1,7 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-06-23 (sesión 3: escenarios YAML + runner UAC)
+Fecha: 2026-06-23 (sesión 4: web de control — Fase 4)
 
 ## Estado actual
 - Proyecto en Go con base v0 funcional: núcleo SIP que envía OPTIONS (UAC),
@@ -69,11 +69,23 @@ dimitri-5000 --mode uac --to sip:<IP_DEL_SBC>:5060 # apunta al SBC, que reenvía
 - Alcance actual del runner: UAC con flujo estándar de llamada. Pendiente: UAS,
   peticiones arbitrarias, save/match reales e inyección CSV.
 
+## Fase 4 (web de control) — primera iteración
+- internal/control: Controller que posee el Core, lanza llamadas UAC en segundo
+  plano y mantiene su estado (dialing/ringing/established/ended/failed) con snapshot
+  y Hangup. Llamada manual desde la web.
+- webui: endpoints /api/calls (GET), /api/call (POST), /api/call/hangup (POST);
+  monitor y control opcionales (nil-safe).
+- main: nuevo --mode web (arranca Serve + faro + controlador + web).
+- UI rediseñada estilo The Designer Republic (negro, tipografía bold, rejilla,
+  acento ácido): bloques 01 PLACE CALL, 02 CALLS (en vivo), 03 TRUNKS.
+- Verificado de extremo a extremo: lanzar llamada por la web → established → ended.
+- Arranque: dimitri-5000 --mode web --bind-ip <ip> --sip-port 5070 --web 127.0.0.1:8080
+
 ## Próximos pasos
-1. Fase 2: ejecución de escenarios UAS (servidor dirigido por pasos).
-2. Fase 2: implementar save/match (capturas {header:...}/{regex:...}) e inyección CSV.
-3. Fase 3: carga (cps y llamadas concurrentes) + estadísticas.
-4. Web de control con estética The Designer Republic (Fase 4); media RTP (Fase 5).
+1. Lanzar ESCENARIOS desde la web (no solo llamadas sueltas).
+2. Fase 2: escenarios UAS; save/match ({header:...}/{regex:...}); inyección CSV.
+3. Fase 3: carga (cps y llamadas concurrentes) + estadísticas en vivo (SSE/WS).
+4. Media RTP (Fase 5): subir audio (MP3→G.711) y oír las llamadas.
 5. Revisar el WARN de sipgo al cerrar el socket UDP (cosmético, baja prioridad).
 
 ## Decisiones tomadas

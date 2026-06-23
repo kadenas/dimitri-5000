@@ -1,123 +1,247 @@
-/* Estilos de dimitri-5000.
-   Identidad: una consola de operación de telecom. La "luz del faro" (acento
-   ámbar) es el único elemento de marca; todo lo demás se mantiene sobrio para
-   que los datos manden. Tipografía monoespaciada para las cifras (que es como
-   un técnico de VoIP espera leer códigos y latencias). */
+/* DIMITRI//5000 — interfaz estilo The Designer Republic.
+   Lenguaje visual: negro absoluto, tipografía rotunda en mayúsculas, alto
+   contraste, rejilla marcada, un único acento "ácido". Los datos mandan; el
+   estilo es gráfico y técnico, no corporativo. Tipografía del sistema (sin CDN)
+   para que el binario siga siendo autocontenido. */
 
 :root {
-  --bg: #0d1b2a;       /* azul pizarra profundo: fondo de consola */
-  --panel: #13263b;    /* barra superior */
-  --line: #23415e;     /* líneas y separadores */
-  --ink: #e6edf3;      /* texto principal */
-  --muted: #8da4bd;    /* texto secundario */
-  --beam: #f4a259;     /* la luz del faro: acento de marca */
-  --up: #4ade80;       /* troncal activa */
-  --degraded: #f4bf4f; /* troncal degradada */
-  --down: #f4716e;     /* troncal caída */
-  --unknown: #6b7f96;  /* sin datos */
-  --mono: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
-  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --bg: #0a0a0a;        /* negro casi puro */
+  --panel: #111111;     /* paneles */
+  --line: #2a2a2a;      /* rejilla / bordes */
+  --line-strong: #444;  /* bordes marcados */
+  --ink: #ededed;       /* texto principal */
+  --muted: #7d7d7d;     /* secundario */
+  --acid: #d4ff00;      /* acento de marca: amarillo ácido */
+  --acid-dim: #9bb800;
+
+  --up: #57ff8f;
+  --ringing: #d4ff00;
+  --dialing: #4db8ff;
+  --degraded: #ffc451;
+  --down: #ff5b5b;
+  --ended: #7d7d7d;
+
+  --sans: "Helvetica Neue", Helvetica, Arial, "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, Menlo, monospace;
 }
 
 * { box-sizing: border-box; }
 
+html, body { margin: 0; }
 body {
-  margin: 0;
   background: var(--bg);
   color: var(--ink);
   font-family: var(--sans);
+  /* Rejilla sutil de fondo: motivo técnico. */
+  background-image:
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size: 44px 44px;
+  background-position: -1px -1px;
 }
 
-/* ---- Barra superior ---- */
-.topbar {
+/* ---- Cabecera / wordmark ---- */
+.masthead {
+  border-bottom: 3px solid var(--ink);
+  background: var(--bg);
+  padding: 26px 28px 18px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: end;
+  gap: 18px;
+}
+.wordmark {
+  font-weight: 800;
+  font-size: clamp(34px, 6vw, 68px);
+  letter-spacing: -0.04em;
+  line-height: 0.9;
+  text-transform: uppercase;
+}
+.wordmark .slash { color: var(--acid); margin: 0 0.04em; }
+.wordmark .num { -webkit-text-stroke: 1.5px var(--ink); color: transparent; }
+.sub {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.25em;
+  color: var(--muted);
+  text-transform: uppercase;
+  padding-bottom: 6px;
+}
+.sysline {
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  color: var(--acid);
+  text-align: right;
+  align-self: end;
+  padding-bottom: 4px;
+}
+
+/* ---- Bloques ---- */
+main { padding: 24px 28px 60px; max-width: 1280px; }
+.block { margin-bottom: 34px; }
+.block-title {
+  font-size: 14px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  font-weight: 800;
+  margin: 0 0 12px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
+  gap: 12px;
 }
-.brand { display: flex; align-items: center; gap: 12px; }
-.brand h1 { font-size: 18px; margin: 0; letter-spacing: 0.5px; }
-.tag {
+.block-title .idx {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--bg);
+  background: var(--acid);
+  padding: 2px 7px;
+  font-weight: 700;
+}
+
+/* ---- Panel de control (lanzar llamada) ---- */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+}
+.control {
+  display: flex;
+  gap: 0;
+  align-items: stretch;
+  flex-wrap: wrap;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 18px;
+  border-right: 1px solid var(--line);
+}
+.field.grow { flex: 1 1 320px; }
+.field > span {
   font-family: var(--mono);
   font-size: 11px;
+  letter-spacing: 0.2em;
+  color: var(--muted);
+}
+.field input {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid var(--line-strong);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 18px;
+  padding: 6px 0;
+  outline: none;
+}
+.field input:focus { border-bottom-color: var(--acid); }
+.field input::placeholder { color: #555; }
+
+.btn-dial {
+  border: 0;
+  background: var(--acid);
+  color: #000;
+  font-family: var(--sans);
+  font-weight: 800;
+  font-size: 20px;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  letter-spacing: 1px;
-  color: var(--beam);
-  border: 1px solid var(--beam);
-  border-radius: 999px;
-  padding: 2px 8px;
+  padding: 0 34px;
+  cursor: pointer;
+  transition: background 0.12s ease, transform 0.05s ease;
 }
-.meta { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.btn-dial:hover { background: #eaff5a; }
+.btn-dial:active { transform: translateY(1px); }
 
-/* Signature: la luz del faro, un pulso lento en el color de marca. */
-.beam {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--beam);
-  animation: pulse 2.4s ease-out infinite;
+.hint {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  margin-top: 8px;
 }
-@keyframes pulse {
-  0%   { box-shadow: 0 0 0 0 rgba(244, 162, 89, 0.6); }
-  70%  { box-shadow: 0 0 0 12px rgba(244, 162, 89, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(244, 162, 89, 0); }
-}
-/* Accesibilidad: respetamos a quien prefiere menos movimiento. */
-@media (prefers-reduced-motion: reduce) {
-  .beam { animation: none; }
-}
+.hint.error { color: var(--down); }
 
-/* ---- Tabla de troncales ---- */
-main { padding: 24px; }
-
-.trunks {
+/* ---- Tablas / rejilla de datos ---- */
+.grid {
   width: 100%;
   border-collapse: collapse;
-  font-size: 14px;
+  font-size: 13px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
 }
-.trunks th,
-.trunks td {
+.grid th, .grid td {
   text-align: left;
-  padding: 12px 14px;
+  padding: 11px 14px;
   border-bottom: 1px solid var(--line);
+  white-space: nowrap;
 }
-.trunks th {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
+.grid th {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
   color: var(--muted);
-  font-weight: 600;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--line-strong);
 }
-.trunks td { font-family: var(--mono); }
-.trunks td.name { font-family: var(--sans); font-weight: 600; }
-
-.empty td {
+.grid td { font-family: var(--mono); }
+.grid td.right, .grid th.right { text-align: right; }
+.grid tr:last-child td { border-bottom: 0; }
+.grid .empty td {
   color: var(--muted);
   text-align: center;
-  font-family: var(--sans);
+  letter-spacing: 0.2em;
+  padding: 22px;
 }
+.grid tbody-row:hover { background: #161616; }
 
 /* ---- Pastilla de estado ---- */
 .badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 12px;
+  display: inline-block;
+  font-size: 11px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  font-weight: 700;
+  padding: 2px 9px;
+  border: 1px solid currentColor;
 }
-.dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--unknown);
+.s-up, .s-established { color: var(--up); }
+.s-ringing { color: var(--ringing); }
+.s-dialing { color: var(--dialing); }
+.s-degraded { color: var(--degraded); }
+.s-down, .s-failed { color: var(--down); }
+.s-ended { color: var(--ended); }
+.s-unknown { color: var(--muted); }
+
+/* Botón colgar dentro de la tabla */
+.btn-hangup {
+  border: 1px solid var(--down);
+  background: transparent;
+  color: var(--down);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  cursor: pointer;
 }
-.badge.up { color: var(--up); }
-.badge.up .dot { background: var(--up); }
-.badge.degraded { color: var(--degraded); }
-.badge.degraded .dot { background: var(--degraded); }
-.badge.down { color: var(--down); }
-.badge.down .dot { background: var(--down); }
-.badge.unknown { color: var(--unknown); }
+.btn-hangup:hover { background: var(--down); color: #000; }
+.btn-hangup:disabled { opacity: 0.3; cursor: default; }
+
+/* ---- Pie ---- */
+.footer {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  border-top: 1px solid var(--line-strong);
+  background: var(--bg);
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 28px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+}
+.conn.ok { color: var(--up); }
+.conn.bad { color: var(--down); }
+.brand-foot { color: var(--acid-dim); }

@@ -3,38 +3,77 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>dimitri-5000 · faro SIP</title>
+  <title>DIMITRI//5000 — SIP TEST SYSTEM</title>
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="beam" aria-hidden="true"></span>
-      <h1>dimitri&#8209;5000</h1>
-      <span class="tag">faro SIP</span>
+  <!-- Cabecera: wordmark rotundo estilo The Designer Republic -->
+  <header class="masthead">
+    <div class="wordmark">
+      <span class="dim">DIMITRI</span><span class="slash">//</span><span class="num">5000</span>
     </div>
-    <div class="meta" id="updated">conectando…</div>
+    <div class="sub">SIP&nbsp;TEST&nbsp;SYSTEM · v0.4</div>
+    <div class="sysline" id="sysline">
+      <span id="clock">--:--:--</span>
+    </div>
   </header>
 
   <main>
-    <table class="trunks" aria-label="Estado de las troncales">
-      <thead>
-        <tr>
-          <th>Troncal</th>
-          <th>Destino</th>
-          <th>Estado</th>
-          <th>Último código</th>
-          <th>Latencia</th>
-          <th>OK</th>
-          <th>Otros</th>
-          <th>Sin respuesta</th>
-        </tr>
-      </thead>
-      <tbody id="rows">
-        <tr class="empty"><td colspan="8">Esperando el primer sondeo…</td></tr>
-      </tbody>
-    </table>
+    <!-- Bloque: lanzar llamada -->
+    <section class="block">
+      <h2 class="block-title"><span class="idx">01</span> PLACE&nbsp;CALL</h2>
+      <form id="call-form" class="panel control">
+        <label class="field grow">
+          <span>TARGET&nbsp;URI</span>
+          <input type="text" id="to" name="to"
+                 placeholder="sip:192.168.1.10:5060" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>HOLD&nbsp;(s)</span>
+          <input type="number" id="hold" name="hold" value="10" min="0" />
+        </label>
+        <button type="submit" class="btn-dial">DIAL ▸</button>
+      </form>
+      <div class="hint" id="form-hint">0 = mantener hasta colgar a mano.</div>
+    </section>
+
+    <!-- Bloque: llamadas en vivo -->
+    <section class="block">
+      <h2 class="block-title"><span class="idx">02</span> CALLS</h2>
+      <table class="grid">
+        <thead>
+          <tr>
+            <th>ID</th><th>TARGET</th><th>STATE</th><th>CODE</th>
+            <th>STARTED</th><th>ANSWERED</th><th class="right">ACTION</th>
+          </tr>
+        </thead>
+        <tbody id="calls">
+          <tr class="empty"><td colspan="7">NO ACTIVE CALLS</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Bloque: monitor de troncales -->
+    <section class="block">
+      <h2 class="block-title"><span class="idx">03</span> TRUNKS&nbsp;/&nbsp;OPTIONS</h2>
+      <table class="grid">
+        <thead>
+          <tr>
+            <th>TRUNK</th><th>DESTINATION</th><th>STATE</th>
+            <th>CODE</th><th>RTT</th><th>OK</th><th>OTHER</th><th>TIMEOUT</th>
+          </tr>
+        </thead>
+        <tbody id="trunks">
+          <tr class="empty"><td colspan="8">NO TRUNKS</td></tr>
+        </tbody>
+      </table>
+    </section>
   </main>
+
+  <footer class="footer">
+    <span id="conn" class="conn">CONNECTING…</span>
+    <span class="brand-foot">DIMITRI//5000 — KADENAS</span>
+  </footer>
 
   <script src="js/app.js"></script>
 </body>

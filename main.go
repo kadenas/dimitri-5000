@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/kadenas/dimitri-5000/internal/config"
+	"github.com/kadenas/dimitri-5000/internal/control"
 	"github.com/kadenas/dimitri-5000/internal/monitor"
 	"github.com/kadenas/dimitri-5000/internal/netutil"
 	"github.com/kadenas/dimitri-5000/internal/runner"
@@ -31,7 +32,7 @@ import (
 
 func main() {
 	// --- 1. Flags de línea de comandos -------------------------------------
-	mode := flag.String("mode", "monitor", "Modo de ejecución: monitor | uas | uac | scenario")
+	mode := flag.String("mode", "monitor", "Modo de ejecución: monitor | uas | uac | scenario | web")
 	scenarioFile := flag.String("file", "", "Ruta a un escenario YAML (modo scenario)")
 	cfgPath := flag.String("config", "", "Ruta a un fichero de configuración JSON (opcional)")
 	webAddr := flag.String("web", "127.0.0.1:8080", "Dirección de la interfaz web local (modos monitor/uas)")
@@ -107,6 +108,8 @@ func main() {
 		runUAC(ctx, core, resolvedIP, resolvedPort, resolvedTransport, *to, *hold, log)
 	case "scenario":
 		runScenario(ctx, core, resolvedIP, resolvedPort, resolvedTransport, *scenarioFile, *to, log)
+	case "web":
+		runWeb(ctx, core, cfg, *webAddr, resolvedIP, resolvedPort, resolvedTransport, log)
 	default:
 		log.Error("modo desconocido", "mode", *mode, "válidos", "monitor|uas|uac")
 		os.Exit(2)
@@ -145,8 +148,34 @@ func runMonitor(ctx context.Context, core *sipcore.Core, cfg config.Config, webA
 	farol.Start(ctx)
 	log.Info("faro iniciado", "troncales", len(cfg.Targets))
 
-	srv := webui.New(webAddr, farol, log)
+	srv := webui.New(webAddr, farol, nil, log)
 	log.Info("interfaz web disponible", "url", "http://"+webAddr)
+	if err := srv.Run(ctx); err != nil {
+		log.Error("la interfaz web terminó con error", "error", err)
+	}
+}
+
+// runWeb es el modo "estación de trabajo": arranca el servidor SIP (para recibir
+// y para el tráfico dentro del diálogo), el faro de troncales y la web de control,
+// que permite lanzar y seguir llamadas desde el navegador.
+func runWeb(ctx context.Context, core *sipcore.Core, cfg config.Config, webAddr, ip string, port int, transport string, log *slog.Logger) {
+	// Servidor SIP en segundo plano (rol UAS + tráfico in-dialog de las salientes).
+	addr := joinHostPort(ip, port)
+	go func() {
+		if err := core.Serve(ctx, transport, addr); err != nil && ctx.Err() == nil {
+			log.Error("servidor SIP (web) terminó con error", "error", err)
+		}
+	}()
+
+	// Faro de troncales (alimenta el panel de estado).
+	farol := monitor.New(core, cfg.Targets, cfg.Monitor, log)
+	farol.Start(ctx)
+
+	// Controlador de llamadas (lo usa la web para lanzar/seguir llamadas).
+	ctrl := control.New(ctx, core, log)
+
+	srv := webui.New(webAddr, farol, ctrl, log)
+	log.Info("interfaz web disponible", "url", "http://"+webAddr, "sip", addr, "transport", transport)
 	if err := srv.Run(ctx); err != nil {
 		log.Error("la interfaz web terminó con error", "error", err)
 	}
