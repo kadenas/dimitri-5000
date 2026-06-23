@@ -1,0 +1,123 @@
+/* Estilos de dimitri-5000.
+   Identidad: una consola de operación de telecom. La "luz del faro" (acento
+   ámbar) es el único elemento de marca; todo lo demás se mantiene sobrio para
+   que los datos manden. Tipografía monoespaciada para las cifras (que es como
+   un técnico de VoIP espera leer códigos y latencias). */
+
+:root {
+  --bg: #0d1b2a;       /* azul pizarra profundo: fondo de consola */
+  --panel: #13263b;    /* barra superior */
+  --line: #23415e;     /* líneas y separadores */
+  --ink: #e6edf3;      /* texto principal */
+  --muted: #8da4bd;    /* texto secundario */
+  --beam: #f4a259;     /* la luz del faro: acento de marca */
+  --up: #4ade80;       /* troncal activa */
+  --degraded: #f4bf4f; /* troncal degradada */
+  --down: #f4716e;     /* troncal caída */
+  --unknown: #6b7f96;  /* sin datos */
+  --mono: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+}
+
+/* ---- Barra superior ---- */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand h1 { font-size: 18px; margin: 0; letter-spacing: 0.5px; }
+.tag {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--beam);
+  border: 1px solid var(--beam);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.meta { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+
+/* Signature: la luz del faro, un pulso lento en el color de marca. */
+.beam {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--beam);
+  animation: pulse 2.4s ease-out infinite;
+}
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(244, 162, 89, 0.6); }
+  70%  { box-shadow: 0 0 0 12px rgba(244, 162, 89, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(244, 162, 89, 0); }
+}
+/* Accesibilidad: respetamos a quien prefiere menos movimiento. */
+@media (prefers-reduced-motion: reduce) {
+  .beam { animation: none; }
+}
+
+/* ---- Tabla de troncales ---- */
+main { padding: 24px; }
+
+.trunks {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.trunks th,
+.trunks td {
+  text-align: left;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.trunks th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.trunks td { font-family: var(--mono); }
+.trunks td.name { font-family: var(--sans); font-weight: 600; }
+
+.empty td {
+  color: var(--muted);
+  text-align: center;
+  font-family: var(--sans);
+}
+
+/* ---- Pastilla de estado ---- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--unknown);
+}
+.badge.up { color: var(--up); }
+.badge.up .dot { background: var(--up); }
+.badge.degraded { color: var(--degraded); }
+.badge.degraded .dot { background: var(--degraded); }
+.badge.down { color: var(--down); }
+.badge.down .dot { background: var(--down); }
+.badge.unknown { color: var(--unknown); }

@@ -1,0 +1,16 @@
+# Binarios compilados
+/dimitri-5000
+/dimitri-5000.exe
+/dist/
+*.exe
+
+# Configuración local real (NO subir: puede llevar IPs internas)
+config.json
+
+# Sistema operativo / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Ajustes locales de Claude Code (permisos de esta máquina, no del proyecto)
+.claude/settings.local.json

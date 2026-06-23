@@ -1,0 +1,24 @@
+{
+  "bind_ip": "192.168.1.50",
+  "monitor": {
+    "interval_seconds": 5,
+    "timeout_seconds": 2,
+    "fail_threshold": 3
+  },
+  "targets": [
+    {
+      "id": "trunk-operador",
+      "name": "Troncal Operador",
+      "host": "10.20.30.40",
+      "port": 5060,
+      "transport": "UDP"
+    },
+    {
+      "id": "pbx-central",
+      "name": "Centralita principal",
+      "host": "10.20.30.10",
+      "port": 5060,
+      "transport": "UDP"
+    }
+  ]
+}
