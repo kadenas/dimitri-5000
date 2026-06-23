@@ -1,7 +1,7 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-06-23 (sesión 2: modo manual CLI)
+Fecha: 2026-06-23 (sesión 3: escenarios YAML + runner UAC)
 
 ## Estado actual
 - Proyecto en Go con base v0 funcional: núcleo SIP que envía OPTIONS (UAC),
@@ -56,14 +56,30 @@ dimitri-5000 --mode uac --to sip:<IP_DEL_SBC>:5060 # apunta al SBC, que reenvía
 - Tests verdes (parseo válido + 7 casos de validación que deben fallar).
 - yaml.v3 pasó a dependencia directa en go.mod.
 
+## Runner de escenarios (añadido)
+- sipcore: DialURIWithOptions (cabeceras como map[string]string + body) y
+  WaitAnswerObserved (observa cada respuesta vía AnswerOptions.OnResponse).
+  Getters LocalIP()/LocalPort().
+- internal/runner: ejecuta escenarios UAC dirigidos por los pasos. Sustitución de
+  variables {var} (incluye internas remote_host/local_ip...), genera SDP G.711
+  básico, añade tag al From, valida los recv de respuesta contra lo recibido.
+- CLI: nuevo --mode scenario --file <yaml> [--to <destino>].
+- Verificado: test de loopback (runner) + ejecución real por CLI de
+  examples/scenarios/uac-basico.yaml contra un UAS. Todos los tests en verde.
+- Alcance actual del runner: UAC con flujo estándar de llamada. Pendiente: UAS,
+  peticiones arbitrarias, save/match reales e inyección CSV.
+
 ## Próximos pasos
-1. Fase 2: primitivas send/recv genéricas en sipcore (músculo del runner).
-2. Fase 2: runner que ejecuta un escenario (UAC y UAS); verificar con loopback.
-3. Fase 2: variables, save/match e inyección CSV.
+1. Fase 2: ejecución de escenarios UAS (servidor dirigido por pasos).
+2. Fase 2: implementar save/match (capturas {header:...}/{regex:...}) e inyección CSV.
+3. Fase 3: carga (cps y llamadas concurrentes) + estadísticas.
 4. Web de control con estética The Designer Republic (Fase 4); media RTP (Fase 5).
 5. Revisar el WARN de sipgo al cerrar el socket UDP (cosmético, baja prioridad).
 
 ## Decisiones tomadas
+- **Conformidad RFC (principio rector):** todo debe cumplir las RFC de SIP (3261 y
+  relacionadas) y el comportamiento correcto de UDP/TCP. Apoyarse en sipgo y no
+  introducir atajos que violen el protocolo. Validar contra SIPp/centralitas reales.
 - **Librería SIP:** sipgo (única en su capa, aislada en internal/sipcore).
 - **Escenarios:** formato propio YAML/JSON (no XML de SIPp), por legibilidad.
 - **Interfaz:** web como control principal; CLI para arranque.

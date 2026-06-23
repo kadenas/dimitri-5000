@@ -51,12 +51,54 @@ func (c *Core) DialURI(ctx context.Context, uri string, sdp []byte) (*UACCall, e
 	return c.Dial(ctx, recipient, sdp)
 }
 
+// CallOptions permite a capas superiores (el runner de escenarios) personalizar el
+// INVITE sin conocer sipgo: las cabeceras se pasan como texto y aquí se traducen.
+type CallOptions struct {
+	Headers map[string]string // cabeceras a fijar (From, To, ...). Vacío = autogeneradas
+	Body    []byte            // cuerpo del mensaje (p. ej. SDP). nil = sin cuerpo
+}
+
+// DialURIWithOptions lanza un INVITE con cabeceras/cuerpo personalizados. Es la
+// vía que usa el runner de escenarios.
+func (c *Core) DialURIWithOptions(ctx context.Context, uri string, opts CallOptions) (*UACCall, error) {
+	var recipient sip.Uri
+	if err := sip.ParseUri(uri, &recipient); err != nil {
+		return nil, fmt.Errorf("URI de destino inválida %q: %w", uri, err)
+	}
+
+	// Traducimos las cabeceras de texto a cabeceras de sipgo (aislamiento de la librería).
+	headers := make([]sip.Header, 0, len(opts.Headers))
+	for nombre, valor := range opts.Headers {
+		headers = append(headers, sip.NewHeader(nombre, valor))
+	}
+
+	session, err := c.dialogClient.Invite(ctx, recipient, opts.Body, headers...)
+	if err != nil {
+		return nil, fmt.Errorf("enviando INVITE: %w", err)
+	}
+	return &UACCall{session: session}, nil
+}
+
 // WaitAnswer bloquea hasta recibir la respuesta final del INVITE. Devuelve nil
 // si la llamada fue contestada (2xx); error en caso de rechazo (4xx/5xx/6xx),
 // timeout o cancelación del contexto. Si el contexto se cancela mientras se
 // espera, sipgo envía CANCEL automáticamente.
 func (call *UACCall) WaitAnswer(ctx context.Context) error {
 	return call.session.WaitAnswer(ctx, sipgo.AnswerOptions{})
+}
+
+// WaitAnswerObserved es como WaitAnswer pero invoca onResponse por CADA respuesta
+// recibida (100, 180, 200...). Lo usa el runner para validar los pasos 'recv'
+// explícitos contra lo que realmente llega.
+func (call *UACCall) WaitAnswerObserved(ctx context.Context, onResponse func(code int, reason string)) error {
+	return call.session.WaitAnswer(ctx, sipgo.AnswerOptions{
+		OnResponse: func(res *sip.Response) error {
+			if onResponse != nil {
+				onResponse(int(res.StatusCode), res.Reason)
+			}
+			return nil
+		},
+	})
 }
 
 // Ack confirma una llamada contestada (envía el ACK del 200 OK). Tras esto el

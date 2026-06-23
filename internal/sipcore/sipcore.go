@@ -102,6 +102,12 @@ func New(bindIP string, sipPort int, userAgent string, log *slog.Logger) (*Core,
 	return c, nil
 }
 
+// LocalIP devuelve la IP local de señalización (bind IP).
+func (c *Core) LocalIP() string { return c.bindIP }
+
+// LocalPort devuelve el puerto SIP local.
+func (c *Core) LocalPort() int { return c.sipPort }
+
 // SendOptions envía un OPTIONS al destino host:port indicado y espera la
 // respuesta final. El ctx permite imponer un timeout por envío (lo fija el faro).
 func (c *Core) SendOptions(ctx context.Context, host string, port int, transport string) (Result, error) {

@@ -23,13 +23,16 @@ import (
 	"github.com/kadenas/dimitri-5000/internal/config"
 	"github.com/kadenas/dimitri-5000/internal/monitor"
 	"github.com/kadenas/dimitri-5000/internal/netutil"
+	"github.com/kadenas/dimitri-5000/internal/runner"
+	"github.com/kadenas/dimitri-5000/internal/scenario"
 	"github.com/kadenas/dimitri-5000/internal/sipcore"
 	"github.com/kadenas/dimitri-5000/internal/webui"
 )
 
 func main() {
 	// --- 1. Flags de línea de comandos -------------------------------------
-	mode := flag.String("mode", "monitor", "Modo de ejecución: monitor | uas | uac")
+	mode := flag.String("mode", "monitor", "Modo de ejecución: monitor | uas | uac | scenario")
+	scenarioFile := flag.String("file", "", "Ruta a un escenario YAML (modo scenario)")
 	cfgPath := flag.String("config", "", "Ruta a un fichero de configuración JSON (opcional)")
 	webAddr := flag.String("web", "127.0.0.1:8080", "Dirección de la interfaz web local (modos monitor/uas)")
 
@@ -102,6 +105,8 @@ func main() {
 		runUAS(ctx, core, resolvedIP, resolvedPort, resolvedTransport, *answerCode, *ringDelay, *hold, log)
 	case "uac":
 		runUAC(ctx, core, resolvedIP, resolvedPort, resolvedTransport, *to, *hold, log)
+	case "scenario":
+		runScenario(ctx, core, resolvedIP, resolvedPort, resolvedTransport, *scenarioFile, *to, log)
 	default:
 		log.Error("modo desconocido", "mode", *mode, "válidos", "monitor|uas|uac")
 		os.Exit(2)
@@ -223,6 +228,48 @@ func runUAC(ctx context.Context, core *sipcore.Core, ip string, port int, transp
 		return
 	}
 	log.Info("llamada finalizada correctamente")
+}
+
+// runScenario carga un escenario YAML y lo ejecuta con el runner. Necesita el
+// servidor en segundo plano para el tráfico dentro del diálogo (igual que uac).
+func runScenario(ctx context.Context, core *sipcore.Core, ip string, port int, transport, file, to string, log *slog.Logger) {
+	if file == "" {
+		log.Error("modo scenario requiere --file <escenario.yaml>")
+		os.Exit(2)
+	}
+
+	sc, err := scenario.Load(file)
+	if err != nil {
+		log.Error("no se pudo cargar el escenario", "error", err)
+		os.Exit(1)
+	}
+
+	if sc.Role == scenario.RoleUAC && to == "" {
+		log.Error("un escenario uac requiere --to (destino), p. ej.: --to sip:192.168.1.10:5060")
+		os.Exit(2)
+	}
+
+	// Servidor en segundo plano (peticiones dentro del diálogo: BYE, etc.).
+	addr := joinHostPort(ip, port)
+	go func() {
+		if err := core.Serve(ctx, transport, addr); err != nil && ctx.Err() == nil {
+			log.Error("servidor SIP (scenario) terminó con error", "error", err)
+		}
+	}()
+	time.Sleep(200 * time.Millisecond)
+
+	target := to
+	if transport == "tcp" && target != "" && !strings.Contains(strings.ToLower(target), "transport=") {
+		target += ";transport=tcp"
+	}
+
+	r := runner.New(core, target, log)
+	runCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	if err := r.Run(runCtx, sc); err != nil {
+		log.Error("la ejecución del escenario falló", "error", err)
+		return
+	}
 }
 
 // joinHostPort une IP y puerto en "ip:puerto" (formato que esperan Serve y sipgo).
