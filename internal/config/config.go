@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -20,6 +22,29 @@ type Target struct {
 	Host      string `json:"host"`      // IP o FQDN del destino
 	Port      int    `json:"port"`      // puerto SIP (típicamente 5060)
 	Transport string `json:"transport"` // "UDP" o "TCP" (en la v1, UDP)
+}
+
+// Validate comprueba que un trunk tiene datos coherentes y normaliza el transporte
+// a mayúsculas. Devuelve un error legible apto para mostrar en la web.
+func (t *Target) Validate() error {
+	if strings.TrimSpace(t.ID) == "" {
+		return fmt.Errorf("el trunk necesita un 'id'")
+	}
+	if strings.TrimSpace(t.Host) == "" {
+		return fmt.Errorf("el trunk %q necesita un 'host'", t.ID)
+	}
+	if t.Port < 1 || t.Port > 65535 {
+		return fmt.Errorf("puerto inválido en el trunk %q: %d", t.ID, t.Port)
+	}
+	tr := strings.ToUpper(strings.TrimSpace(t.Transport))
+	if tr == "" {
+		tr = "UDP" // por defecto
+	}
+	if tr != "UDP" && tr != "TCP" {
+		return fmt.Errorf("transporte inválido en el trunk %q: %q (usa UDP o TCP)", t.ID, t.Transport)
+	}
+	t.Transport = tr
+	return nil
 }
 
 // MonitorConfig agrupa los parámetros de comportamiento del faro.
@@ -84,4 +109,37 @@ func Load(path string) (Config, error) {
 		return cfg, fmt.Errorf("parseando JSON de %s: %w", path, err)
 	}
 	return cfg, nil
+}
+
+// Save escribe la configuración en path como JSON legible. Lo hace de forma
+// ATÓMICA: escribe primero en un fichero temporal y luego lo renombra sobre el
+// definitivo. Así, si el proceso se corta a mitad, el config.json original no
+// queda corrupto (el rename es atómico en el sistema de ficheros).
+func Save(path string, cfg Config) error {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("serializando configuración: %w", err)
+	}
+	data = append(data, '\n')
+
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".dimitri-config-*.tmp")
+	if err != nil {
+		return fmt.Errorf("creando fichero temporal en %s: %w", dir, err)
+	}
+	tmpName := tmp.Name()
+	// Si algo falla a partir de aquí, intentamos no dejar basura.
+	defer os.Remove(tmpName)
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("escribiendo configuración temporal: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("cerrando configuración temporal: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("reemplazando %s: %w", path, err)
+	}
+	return nil
 }

@@ -187,7 +187,8 @@ func runWeb(ctx context.Context, core *sipcore.Core, cfg config.Config, webAddr,
 	ctrl := control.New(ctx, core, log)
 
 	srv := webui.New(webAddr, farol, ctrl, log)
-	log.Info("interfaz web disponible", "url", "http://"+webAddr, "sip", addr, "transport", transport)
+	logWebURLs(webAddr, ip, log)
+	log.Info("motor SIP", "sip", addr, "transport", transport)
 	if err := srv.Run(ctx); err != nil {
 		log.Error("la interfaz web terminó con error", "error", err)
 	}
@@ -310,6 +311,25 @@ func runScenario(ctx context.Context, core *sipcore.Core, ip string, port int, t
 	if err := r.Run(runCtx, sc); err != nil {
 		log.Error("la ejecución del escenario falló", "error", err)
 		return
+	}
+}
+
+// logWebURLs muestra cómo abrir la interfaz web. Si se escucha en 0.0.0.0 (todas
+// las interfaces), indica también la URL con la IP de red para entrar desde otros
+// equipos; si solo escucha en 127.0.0.1, avisa de que es de acceso local.
+func logWebURLs(webAddr, lanIP string, log *slog.Logger) {
+	host, port, found := strings.Cut(webAddr, ":")
+	if !found {
+		port = webAddr
+	}
+	switch host {
+	case "0.0.0.0", "":
+		log.Info("interfaz web disponible (red)", "local", "http://127.0.0.1:"+port, "red", "http://"+lanIP+":"+port)
+	case "127.0.0.1", "localhost":
+		log.Info("interfaz web disponible (solo local)", "url", "http://127.0.0.1:"+port,
+			"sugerencia", "usa --web 0.0.0.0:"+port+" para acceder desde otros equipos")
+	default:
+		log.Info("interfaz web disponible", "url", "http://"+webAddr)
 	}
 }
 

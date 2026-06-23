@@ -1,7 +1,7 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-06-23 (sesión 4: web de control — Fase 4)
+Fecha: 2026-06-24 (sesión 5: trunk OPTIONS, config persistente, multi-instancia)
 
 ## Estado actual
 - Proyecto en Go con base v0 funcional: núcleo SIP que envía OPTIONS (UAC),
@@ -81,12 +81,31 @@ dimitri-5000 --mode uac --to sip:<IP_DEL_SBC>:5060 # apunta al SBC, que reenvía
 - Verificado de extremo a extremo: lanzar llamada por la web → established → ended.
 - Arranque: dimitri-5000 --mode web --bind-ip <ip> --sip-port 5070 --web 127.0.0.1:8080
 
-## Próximos pasos
-1. Lanzar ESCENARIOS desde la web (no solo llamadas sueltas).
-2. Fase 2: escenarios UAS; save/match ({header:...}/{regex:...}); inyección CSV.
-3. Fase 3: carga (cps y llamadas concurrentes) + estadísticas en vivo (SSE/WS).
-4. Media RTP (Fase 5): subir audio (MP3→G.711) y oír las llamadas.
-5. Revisar el WARN de sipgo al cerrar el socket UDP (cosmético, baja prioridad).
+## Sesión 5 — trunk OPTIONS, multi-instancia y config persistente
+- Trunk real: Serve responde OPTIONS 200 (Allow/Accept/Contact). Fix: el modo
+  monitor ahora hace Serve (si no, se perdían las respuestas a los OPTIONS).
+  Verificado con dos instancias en 127.0.0.1 y test TestOptionsTrunk.
+- Multi-instancia: ejecutar el binario 2 veces con --sip-port y --web distintos
+  (p. ej. :5070/:8080 y :5072/:8081). Cada una es independiente.
+- IP de red: el SIP ya usa la IP real autodetectada. La web ahora loguea la URL
+  con la IP de red y sugiere --web 0.0.0.0:PUERTO para acceso desde otros equipos.
+- Configuración PERSISTENTE (base de "app configurable"):
+  - config.Save atómico (temporal + rename, no corrompe config.json).
+  - config.Store: fuente de verdad concurrente con AddTarget/RemoveTarget/
+    SetSignaling + validación (id único, transporte normalizado) y persistencia.
+  - Decidido: cambios de nuestro puerto/IP se aplican AL REINICIAR.
+  - Test store_test.go en verde.
+
+## Próximos pasos (bloque "app configurable", en curso)
+1. Faro dinámico: refactor del monitor para añadir/quitar trunks en caliente
+   leyendo del config.Store (cada trunk con su goroutine y cancelación).
+2. API web: GET/POST /api/trunks, DELETE /api/trunks/{id}, GET/PUT /api/settings.
+3. Panel web SETTINGS (estilo TDR): alta/baja de trunks y edición de señalización
+   (aviso "reinicia para aplicar el puerto").
+4. Luego: lanzar ESCENARIOS desde la web; escenarios UAS; save/match; inyección CSV.
+5. Fase 3: carga (cps + concurrencia, patrón del Dimitri-4000) + stats en vivo.
+6. Media RTP (Fase 5): subir audio (MP3→G.711) y oír las llamadas.
+7. Revisar el WARN de sipgo al cerrar el socket UDP (cosmético).
 
 ## Decisiones tomadas
 - **Conformidad RFC (principio rector):** todo debe cumplir las RFC de SIP (3261 y
