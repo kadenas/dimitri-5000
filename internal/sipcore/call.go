@@ -153,6 +153,7 @@ func (c *Core) Serve(ctx context.Context, network, addr string) error {
 	srv.OnAck(c.onAck)
 	srv.OnBye(c.onBye)
 	srv.OnCancel(c.onCancel)
+	srv.OnOptions(c.onOptions) // responde a los OPTIONS de keepalive (rol "trunk")
 
 	c.log.Info("servidor SIP escuchando", "network", network, "addr", addr)
 	return srv.ListenAndServe(ctx, network, addr)
@@ -199,6 +200,21 @@ func (c *Core) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 			}
 		case <-tx.Done():
 		}
+	}
+}
+
+// onOptions responde a un OPTIONS con 200 OK. Es el comportamiento de un trunk
+// o centralita ante el keepalive: confirma que está vivo y, según la RFC 3261
+// (sección 11), anuncia en 'Allow' los métodos que soporta y en 'Accept' los
+// cuerpos que entiende. Así el otro extremo (o nuestro propio faro) lo ve activo.
+func (c *Core) onOptions(req *sip.Request, tx sip.ServerTransaction) {
+	c.log.Debug("OPTIONS entrante", "from", req.Source())
+	res := sip.NewResponseFromRequest(req, 200, "OK", nil)
+	res.AppendHeader(sip.NewHeader("Allow", "INVITE, ACK, BYE, CANCEL, OPTIONS"))
+	res.AppendHeader(sip.NewHeader("Accept", "application/sdp"))
+	res.AppendHeader(&c.contact) // dónde contactarnos
+	if err := tx.Respond(res); err != nil {
+		c.log.Error("respondiendo OPTIONS", "error", err)
 	}
 }
 

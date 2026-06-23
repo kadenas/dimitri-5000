@@ -101,7 +101,7 @@ func main() {
 	// --- 5. Despachar según el modo ----------------------------------------
 	switch *mode {
 	case "monitor":
-		runMonitor(ctx, core, cfg, *webAddr, log)
+		runMonitor(ctx, core, cfg, *webAddr, resolvedTransport, log)
 	case "uas":
 		runUAS(ctx, core, resolvedIP, resolvedPort, resolvedTransport, *answerCode, *ringDelay, *hold, log)
 	case "uac":
@@ -142,11 +142,23 @@ func resolveBindIP(flagIP, cfgIP string, log *slog.Logger) string {
 	return ip
 }
 
-// runMonitor arranca el faro de OPTIONS y la interfaz web (comportamiento original).
-func runMonitor(ctx context.Context, core *sipcore.Core, cfg config.Config, webAddr string, log *slog.Logger) {
+// runMonitor arranca el faro de OPTIONS y la interfaz web. También levanta el
+// servidor SIP (Serve): es imprescindible para RECIBIR las respuestas a nuestros
+// OPTIONS, porque anunciamos nuestro puerto en el Via y debe haber un socket
+// escuchando ahí. De paso, deja a esta instancia capaz de responder OPTIONS.
+func runMonitor(ctx context.Context, core *sipcore.Core, cfg config.Config, webAddr, transport string, log *slog.Logger) {
+	addr := joinHostPort(core.LocalIP(), core.LocalPort())
+	go func() {
+		if err := core.Serve(ctx, transport, addr); err != nil && ctx.Err() == nil {
+			log.Error("servidor SIP (monitor) terminó con error", "error", err)
+		}
+	}()
+	// Pequeña espera a que el socket esté escuchando antes del primer sondeo.
+	time.Sleep(200 * time.Millisecond)
+
 	farol := monitor.New(core, cfg.Targets, cfg.Monitor, log)
 	farol.Start(ctx)
-	log.Info("faro iniciado", "troncales", len(cfg.Targets))
+	log.Info("faro iniciado", "troncales", len(cfg.Targets), "sip", addr)
 
 	srv := webui.New(webAddr, farol, nil, log)
 	log.Info("interfaz web disponible", "url", "http://"+webAddr)
