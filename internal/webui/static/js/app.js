@@ -8,7 +8,7 @@ const LABEL = {
   dialing: "DIALING", ringing: "RINGING", established: "ESTABLISHED",
   ended: "ENDED", failed: "FAILED",
   up: "UP", degraded: "DEGRADED", down: "DOWN", unknown: "—",
-  running: "RUNNING", stopped: "STOPPED",
+  running: "RUNNING", stopped: "STOPPED", ok: "OK",
 };
 
 // Recordamos qué agente está elegido en PLACE CALL para no perderlo al refrescar.
@@ -17,6 +17,8 @@ let selectedToAgent = "";        // agente DESTINO ("" = destino manual / extern
 let selectedMsgAgent = "default"; // agente que ENVÍA el mensaje
 let selectedMsgToAgent = "";      // agente DESTINO del mensaje
 let selectedTrunkAgent = "default"; // agente que monitoriza el trunk a dar de alta
+let selectedScenarioAgent = "default"; // agente que EJECUTA el escenario
+let selectedScenarioFile = "";        // fichero de escenario elegido en el desplegable
 let agentsCache = [];            // última lista de agentes (para resolver destino)
 let selectedCall = "";           // Call-ID elegido en el ladder
 let showOptions = false;         // mostrar diálogos de OPTIONS (keepalive) en el ladder
@@ -211,6 +213,14 @@ function renderAgentSelector(datos) {
     if (!ids.includes(selectedTrunkAgent)) selectedTrunkAgent = ids[0] || "default";
     tr.innerHTML = sel.innerHTML;
     tr.value = selectedTrunkAgent;
+  }
+
+  // Selector del agente que EJECUTA escenarios (mismo origen de agentes).
+  const sc = document.getElementById("sc-agent");
+  if (sc) {
+    if (!ids.includes(selectedScenarioAgent)) selectedScenarioAgent = ids[0] || "default";
+    sc.innerHTML = sel.innerHTML;
+    sc.value = selectedScenarioAgent;
   }
 }
 
@@ -422,22 +432,74 @@ async function refreshTrace() {
   }
 }
 
+// ---- Escenarios (Fase 2) ----
+
+// Carga la lista de escenarios disponibles en disco y rellena el desplegable,
+// conservando la elección. Se llama al arranque y con el botón RELOAD: NO en cada
+// refresco, porque listar implica leer y parsear los YAML y no cambian a menudo.
+async function loadScenarios() {
+  const sel = document.getElementById("sc-file");
+  if (!sel) return;
+  try {
+    const lista = await fetch("/api/scenarios").then((r) => r.json());
+    const files = lista.map((s) => s.file);
+    if (selectedScenarioFile && !files.includes(selectedScenarioFile)) selectedScenarioFile = "";
+    if (!selectedScenarioFile && files.length) selectedScenarioFile = files[0];
+    sel.innerHTML = lista.map((s) => {
+      // Si el YAML no carga, marcamos el fichero para que se vea cuál falla.
+      const etiqueta = s.error
+        ? s.file + " · ⚠ ERROR"
+        : s.file + " · " + String(s.role || "?").toUpperCase() + " · " + (s.name || "");
+      return '<option value="' + esc(s.file) + '">' + esc(etiqueta) + "</option>";
+    }).join("") || '<option value="">— sin escenarios —</option>';
+    sel.value = selectedScenarioFile;
+  } catch (e) {
+    sel.innerHTML = '<option value="">— error al listar —</option>';
+  }
+}
+
+// Pinta el historial de ejecuciones de escenario (las más recientes arriba).
+function renderScenarioRuns(datos) {
+  const tbody = document.getElementById("scenario-runs");
+  if (!datos || datos.length === 0) {
+    tbody.innerHTML = '<tr class="empty"><td colspan="7">NO RUNS</td></tr>';
+    return;
+  }
+  tbody.innerHTML = datos.slice().reverse().map((s) => {
+    // En caso de fallo mostramos el motivo como tooltip de la pastilla de estado.
+    const estado = s.error
+      ? '<span class="badge s-failed" title="' + esc(s.error) + '">FAILED</span>'
+      : badge(s.state);
+    return "<tr>" +
+      "<td>" + esc(s.agent_id) + "</td>" +
+      "<td>" + esc(s.name || "—") + "</td>" +
+      "<td>" + esc(s.file) + "</td>" +
+      "<td>" + esc(s.target || "—") + "</td>" +
+      "<td>" + estado + "</td>" +
+      "<td>" + hhmmss(s.started_at) + "</td>" +
+      "<td>" + hhmmss(s.ended_at) + "</td>" +
+      "</tr>";
+  }).join("");
+}
+
 // ---- Refresco periódico ----
 
 async function refresh() {
   const conn = document.getElementById("conn");
   try {
-    const [agents, calls, trunks, messages] = await Promise.all([
+    const [agents, calls, trunks, messages, scenarioRuns] = await Promise.all([
       fetch("/api/agents").then((r) => r.json()),
       fetch("/api/calls").then((r) => r.json()),
       fetch("/api/trunks").then((r) => r.json()),
       fetch("/api/messages").then((r) => r.json()),
+      fetch("/api/scenarios/runs").then((r) => r.json()),
     ]);
     renderAgents(agents);
     renderAgentSelector(agents);
     renderCalls(calls);
     renderTrunks(trunks);
     renderMessages(messages);
+    renderScenarioRuns(scenarioRuns);
     await refreshTrace();
     conn.textContent = "ONLINE";
     conn.className = "conn ok";
@@ -692,6 +754,44 @@ document.getElementById("trace-clear").addEventListener("click", async () => {
   selectedCall = "";
   refreshTrace();
 });
+
+// ---- Escenarios: selección, recarga y ejecución ----
+document.getElementById("sc-agent").addEventListener("change", (ev) => {
+  selectedScenarioAgent = ev.target.value;
+});
+document.getElementById("sc-file").addEventListener("change", (ev) => {
+  selectedScenarioFile = ev.target.value;
+});
+document.getElementById("sc-reload").addEventListener("click", loadScenarios);
+document.getElementById("scenario-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const hint = document.getElementById("scenario-hint");
+  const agentId = document.getElementById("sc-agent").value || "default";
+  const file = document.getElementById("sc-file").value;
+  const target = val("sc-target");
+  if (!file) {
+    hint.textContent = "No hay escenario seleccionado.";
+    hint.className = "hint error";
+    return;
+  }
+  try {
+    const res = await fetch("/api/scenarios/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent_id: agentId, file, target }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const r = await res.json();
+    hint.textContent = "Escenario lanzado (" + agentId + ") · id " + r.id;
+    hint.className = "hint";
+    refresh();
+  } catch (e) {
+    hint.textContent = "Error: " + e.message;
+    hint.className = "hint error";
+  }
+});
+
+loadScenarios(); // lista inicial de escenarios disponibles en disco
 
 tickClock();
 setInterval(tickClock, 1000);

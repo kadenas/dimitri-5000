@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kadenas/dimitri-5000/internal/runner"
+	"github.com/kadenas/dimitri-5000/internal/scenario"
 	"github.com/kadenas/dimitri-5000/internal/sipcore"
 )
 
@@ -22,6 +24,13 @@ const (
 	StateEstablished = "established" // contestada (200 + ACK)
 	StateEnded       = "ended"       // finalizada con BYE
 	StateFailed      = "failed"      // error o rechazo
+)
+
+// Estados de una ejecución de escenario gestionada por el controlador.
+const (
+	ScenarioRunning = "running" // el runner está ejecutando los pasos
+	ScenarioOK      = "ok"      // el escenario terminó sin error
+	ScenarioFailed  = "failed"  // el escenario falló (un recv esperado no llegó, etc.)
 )
 
 // CallRec es la foto del estado de una llamada. Las etiquetas json definen cómo
@@ -57,6 +66,18 @@ type MessageRec struct {
 	Timestamp string `json:"timestamp"`  // hora del evento
 }
 
+// ScenarioRec es la foto de una ejecución de escenario para mostrarla en la web.
+type ScenarioRec struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`             // 'name' del escenario ejecutado
+	File      string `json:"file"`             // fichero YAML de origen
+	Target    string `json:"target"`           // destino contra el que se ejecutó
+	State     string `json:"state"`            // running | ok | failed
+	Error     string `json:"error,omitempty"`  // motivo si falló
+	StartedAt string `json:"started_at"`       // hora de inicio
+	EndedAt   string `json:"ended_at,omitempty"` // hora de fin (vacío mientras corre)
+}
+
 // Controller gestiona el motor y el registro de llamadas y mensajes.
 type Controller struct {
 	core *sipcore.Core
@@ -68,6 +89,8 @@ type Controller struct {
 	order []string // ids en orden de creación (las más recientes al final)
 
 	msgs []MessageRec // mensajes SIP enviados y recibidos (orden de aparición)
+
+	scenarios []ScenarioRec // ejecuciones de escenario (orden de aparición)
 }
 
 // New crea el controlador. ctx es el contexto de vida de la app (al cancelarse,
@@ -231,6 +254,63 @@ func (c *Controller) MessagesSnapshot() []MessageRec {
 	defer c.mu.RUnlock()
 	out := make([]MessageRec, len(c.msgs))
 	copy(out, c.msgs)
+	return out
+}
+
+// RunScenario ejecuta un escenario en segundo plano sobre el Core de este control,
+// contra el 'target' indicado, y registra el resultado para que la web lo siga.
+// 'file' es solo el nombre del fichero de origen (para mostrarlo). Devuelve el id
+// del registro. Mismo patrón asíncrono que PlaceCall/SendMessage: la web no se
+// bloquea mientras el escenario corre.
+func (c *Controller) RunScenario(sc *scenario.Scenario, file, target string) string {
+	id := genID()
+	rec := ScenarioRec{
+		ID:        id,
+		Name:      sc.Name,
+		File:      file,
+		Target:    target,
+		State:     ScenarioRunning,
+		StartedAt: now(),
+	}
+
+	c.mu.Lock()
+	c.scenarios = append(c.scenarios, rec)
+	c.mu.Unlock()
+
+	go func() {
+		// Timeout amplio: un escenario con pausas puede durar. Mismo límite que el
+		// modo CLI (2 minutos), acotado para no dejar ejecuciones colgadas.
+		runCtx, cancel := context.WithTimeout(c.ctx, 2*time.Minute)
+		defer cancel()
+
+		r := runner.New(c.core, target, c.log)
+		err := r.Run(runCtx, sc)
+
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		for i := range c.scenarios {
+			if c.scenarios[i].ID == id {
+				c.scenarios[i].EndedAt = now()
+				if err != nil {
+					c.scenarios[i].State = ScenarioFailed
+					c.scenarios[i].Error = err.Error()
+				} else {
+					c.scenarios[i].State = ScenarioOK
+				}
+				break
+			}
+		}
+	}()
+
+	return id
+}
+
+// ScenariosSnapshot devuelve una copia del registro de ejecuciones de escenario.
+func (c *Controller) ScenariosSnapshot() []ScenarioRec {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make([]ScenarioRec, len(c.scenarios))
+	copy(out, c.scenarios)
 	return out
 }
 

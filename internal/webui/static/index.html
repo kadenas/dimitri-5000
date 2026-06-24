@@ -12,7 +12,7 @@
     <div class="wordmark">
       <span class="dim">DIMITRI</span><span class="slash">//</span><span class="num">5000</span>
     </div>
-    <div class="sub">SIP&nbsp;TEST&nbsp;SYSTEM · v0.12</div>
+    <div class="sub">SIP&nbsp;TEST&nbsp;SYSTEM · v0.13</div>
     <div class="sysline" id="sysline">
       <span id="clock">--:--:--</span>
     </div>
@@ -291,6 +291,41 @@
         </div>
       </div>
       <pre id="lad-detail" class="lad-detail">Clic en un mensaje para ver sus cabeceras y cuerpo.</pre>
+    </section>
+
+    <!-- Bloque: escenarios SIPp (Fase 2) — listar y lanzar los YAML de disco -->
+    <section class="block">
+      <h2 class="block-title"><span class="idx">07</span> SCENARIOS</h2>
+      <form id="scenario-form" class="panel control">
+        <label class="field">
+          <span>FROM&nbsp;AGENT</span>
+          <select id="sc-agent"></select>
+        </label>
+        <label class="field grow">
+          <span>SCENARIO</span>
+          <select id="sc-file"></select>
+        </label>
+        <label class="field grow">
+          <span>TARGET&nbsp;URI&nbsp;(uac)</span>
+          <input type="text" id="sc-target"
+                 placeholder="sip:192.168.1.10:5060" autocomplete="off" />
+        </label>
+        <button type="button" id="sc-reload" class="btn-mini">RELOAD</button>
+        <button type="submit" class="btn-dial">RUN ▸</button>
+      </form>
+      <div class="hint" id="scenario-hint">Los escenarios se leen de la carpeta indicada en --scenarios-dir. Un escenario UAC necesita TARGET URI (destino).</div>
+
+      <table class="grid scenario-grid">
+        <thead>
+          <tr>
+            <th>AGENT</th><th>SCENARIO</th><th>FILE</th><th>TARGET</th>
+            <th>STATE</th><th>STARTED</th><th>ENDED</th>
+          </tr>
+        </thead>
+        <tbody id="scenario-runs">
+          <tr class="empty"><td colspan="7">NO RUNS</td></tr>
+        </tbody>
+      </table>
     </section>
   </main>
 

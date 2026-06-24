@@ -37,6 +37,7 @@ func main() {
 	scenarioFile := flag.String("file", "", "Ruta a un escenario YAML (modo scenario)")
 	cfgPath := flag.String("config", "", "Ruta a un fichero de configuración JSON (opcional)")
 	webAddr := flag.String("web", "127.0.0.1:8080", "Dirección de la interfaz web local (modos monitor/uas)")
+	scenariosDir := flag.String("scenarios-dir", "examples/scenarios", "Carpeta con los escenarios YAML que la web puede listar y ejecutar (modo web)")
 
 	// Señalización SIP (común a uas/uac). Si quedan vacíos/0, se toman del config
 	// y, en última instancia, de la autodetección.
@@ -113,7 +114,7 @@ func main() {
 	// --- 5. Despachar según el modo ----------------------------------------
 	switch *mode {
 	case "monitor":
-		runMonitor(ctx, core, cfg, *webAddr, resolvedTransport, log)
+		runMonitor(ctx, core, cfg, *webAddr, resolvedTransport, *scenariosDir, log)
 	case "uas":
 		runUAS(ctx, core, resolvedIP, resolvedPort, resolvedTransport, *answerCode, *ringDelay, *hold, log)
 	case "uac":
@@ -121,7 +122,7 @@ func main() {
 	case "scenario":
 		runScenario(ctx, core, resolvedIP, resolvedPort, resolvedTransport, *scenarioFile, *to, log)
 	case "web":
-		runWeb(ctx, core, cfg, *webAddr, resolvedIP, resolvedPort, resolvedTransport, resolvedFromDomain, log)
+		runWeb(ctx, core, cfg, *webAddr, resolvedIP, resolvedPort, resolvedTransport, resolvedFromDomain, *scenariosDir, log)
 	default:
 		log.Error("modo desconocido", "mode", *mode, "válidos", "monitor|uas|uac")
 		os.Exit(2)
@@ -158,7 +159,7 @@ func resolveBindIP(flagIP, cfgIP string, log *slog.Logger) string {
 // servidor SIP (Serve): es imprescindible para RECIBIR las respuestas a nuestros
 // OPTIONS, porque anunciamos nuestro puerto en el Via y debe haber un socket
 // escuchando ahí. De paso, deja a esta instancia capaz de responder OPTIONS.
-func runMonitor(ctx context.Context, core *sipcore.Core, cfg config.Config, webAddr, transport string, log *slog.Logger) {
+func runMonitor(ctx context.Context, core *sipcore.Core, cfg config.Config, webAddr, transport, scenariosDir string, log *slog.Logger) {
 	addr := joinHostPort(core.LocalIP(), core.LocalPort())
 	go func() {
 		if err := core.Serve(ctx, transport, addr); err != nil && ctx.Err() == nil {
@@ -172,7 +173,7 @@ func runMonitor(ctx context.Context, core *sipcore.Core, cfg config.Config, webA
 	farol.Start(ctx)
 	log.Info("faro iniciado", "troncales", len(cfg.Targets), "sip", addr)
 
-	srv := webui.New(webAddr, farol, nil, nil, log) // modo monitor: sin agentes ni traza
+	srv := webui.New(webAddr, farol, nil, nil, scenariosDir, log) // modo monitor: sin agentes ni traza
 	log.Info("interfaz web disponible", "url", "http://"+webAddr)
 	if err := srv.Run(ctx); err != nil {
 		log.Error("la interfaz web terminó con error", "error", err)
@@ -184,7 +185,7 @@ func runMonitor(ctx context.Context, core *sipcore.Core, cfg config.Config, webA
 // agentes: aquí creamos UN agente por defecto que ADOPTA el Core ya montado (mismo
 // comportamiento que antes), dejando la puerta abierta a añadir más agentes en
 // caliente desde la web (G2).
-func runWeb(ctx context.Context, core *sipcore.Core, cfg config.Config, webAddr, ip string, port int, transport, fromDomain string, log *slog.Logger) {
+func runWeb(ctx context.Context, core *sipcore.Core, cfg config.Config, webAddr, ip string, port int, transport, fromDomain, scenariosDir string, log *slog.Logger) {
 	addr := joinHostPort(ip, port) // dirección SIP (solo para el log informativo)
 
 	// Gestor de agentes con un agente por defecto que adopta el Core actual. Los
@@ -216,7 +217,7 @@ func runWeb(ctx context.Context, core *sipcore.Core, cfg config.Config, webAddr,
 
 	// En modo web la monitorización es POR AGENTE (cada agente tiene sus trunks),
 	// así que no hay faro global: se pasa nil.
-	srv := webui.New(webAddr, nil, mgr, tracer, log)
+	srv := webui.New(webAddr, nil, mgr, tracer, scenariosDir, log)
 	logWebURLs(webAddr, ip, log)
 	log.Info("motor SIP", "sip", addr, "transport", transport)
 	if err := srv.Run(ctx); err != nil {

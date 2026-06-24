@@ -38,6 +38,11 @@ body {
     linear-gradient(90deg, var(--line) 1px, transparent 1px);
   background-size: 44px 44px;
   background-position: -1px -1px;
+  /* Layout en columna a toda la altura de la ventana: permite centrar el
+     contenido principal (main) en vertical y horizontal con margin:auto. */
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ---- Cabecera / wordmark ---- */
@@ -78,7 +83,12 @@ body {
 }
 
 /* ---- Bloques ---- */
-main { padding: 24px 28px 60px; max-width: 1280px; }
+/* Centrado del contenido: en un contenedor flex, margin:auto absorbe el
+   espacio libre del eje, así que centra a la vez en horizontal y en vertical.
+   width:100% (limitado por max-width) hace que ocupe el ancho disponible hasta
+   el tope y luego quede centrado. Si el contenido es más alto que la ventana,
+   los márgenes valen 0 y la página se comporta con scroll normal. */
+main { padding: 24px 28px 60px; width: 100%; max-width: 1280px; margin: auto; }
 .block { margin-bottom: 34px; }
 .block-title {
   font-size: 14px;
@@ -205,7 +215,7 @@ main { padding: 24px 28px 60px; max-width: 1280px; }
   padding: 2px 9px;
   border: 1px solid currentColor;
 }
-.s-up, .s-established { color: var(--up); }
+.s-up, .s-established, .s-ok { color: var(--up); }
 .s-ringing { color: var(--ringing); }
 .s-dialing { color: var(--dialing); }
 .s-degraded { color: var(--degraded); }
@@ -266,6 +276,9 @@ main { padding: 24px 28px 60px; max-width: 1280px; }
 /* Panel de mensajería SIP */
 .msg-compose { flex-wrap: wrap; }
 .msg-grid { margin-top: 14px; }
+
+/* Panel de escenarios (Fase 2) */
+.scenario-grid { margin-top: 14px; }
 
 /* Alta de trunks por agente */
 .trunk-add { margin-top: 14px; flex-wrap: wrap; }

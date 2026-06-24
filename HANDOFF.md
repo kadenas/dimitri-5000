@@ -1,7 +1,41 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-06-24 (sesión 7: + REFER + botonera de llamada + traza con contenido v0.12)
+Fecha: 2026-06-24 (sesión 8: centrado web + Paso B escenarios en la web + plan Fase 5)
+
+## Sesión 8 — centrado de la web + Paso B (escenarios en la web) + plan Fase 5
+- CENTRADO UI (solo CSS): body pasa a flex column (min-height:100vh) y main se
+  centra con margin:auto (vertical + horizontal). Header/footer siguen full-width.
+- PASO B COMPLETO (escenarios SIPp en la web), verificado e2e por API:
+  - internal/scenario/list.go (NUEVO): List(dir) lista/resume los .yaml de una
+    carpeta; un YAML roto NO tumba la lista (aparece con su campo Error).
+  - control: RunScenario(sc, file, target) + ScenariosSnapshot() — ejecuta el
+    runner en goroutine sobre el Core del agente; estados running/ok/failed.
+  - webui: GET /api/scenarios, POST /api/scenarios/run, GET /api/scenarios/runs.
+    Anti path-traversal (filepath.Base). webui.New recibe scenariosDir.
+  - main: flag --scenarios-dir (por defecto examples/scenarios); cableado en
+    runWeb y runMonitor.
+  - UI v0.13: bloque 07 SCENARIOS (selector FROM AGENT, selector SCENARIO,
+    TARGET URI, RUN, RELOAD; tabla de ejecuciones en vivo). Estado 'ok' => .s-ok.
+  - Verificado: build + vet + tests en verde; e2e: GET lista 2 escenarios; run
+    uac-basico.yaml default->:5072 (UAS secundario) => state=ok.
+  - LÍMITE conocido: el runner solo ejecuta escenarios UAC; UAS/save/match/CSV
+    siguen pendientes (ampliación posterior del runner).
+- FASE 5 (RTP/media) PLANIFICADA Y DECIDIDA — alcance COMPLETO CON AUDIO,
+  incremental en sub-pasos:
+  - 5.1 Media base (SIN dependencias): nuevo paquete internal/media (socket RTP,
+    cabecera RTP y G.711 µ-law/A-law a mano); SDP oferta/respuesta con IP:puerto
+    reales; parseo del SDP remoto; métricas (paquetes tx/rx, pérdida, jitter) en
+    el bloque CALLS. A verificar: API sipgo para responder 200 con cuerpo SDP y
+    para el re-INVITE.
+  - 5.2 Enviar audio propio: subir fichero -> G.711 -> RTP. EMPEZAR POR WAV (sin
+    deps); MP3 DESPUÉS con github.com/hajimehoshi/go-mp3 (Go puro, sin CGO;
+    APROBAR antes de añadirla).
+  - 5.3 Oír las llamadas: grabar el RTP entrante a WAV + reproducir en el
+    navegador con <audio> (portable; sin audio del SO en el servidor).
+  - 5.4 HOLD real: re-INVITE a=sendonly/inactive (activa los botones HOLD/RESUME
+    que ya existen deshabilitados).
+- PRÓXIMO ARRANQUE (mañana, desde otro PC): empezar por el sub-paso 5.1.
 
 ## Sesión 7 (cont.) — REFER, botonera y traza con headers (v0.11/v0.12)
 - DESVÍO (REFER): sipcore.UACCall.Refer(referTo) envía REFER in-dialog (sipgo monta

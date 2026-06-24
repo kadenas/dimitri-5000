@@ -16,12 +16,14 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/kadenas/dimitri-5000/internal/agent"
 	"github.com/kadenas/dimitri-5000/internal/config"
 	"github.com/kadenas/dimitri-5000/internal/control"
 	"github.com/kadenas/dimitri-5000/internal/monitor"
+	"github.com/kadenas/dimitri-5000/internal/scenario"
 	"github.com/kadenas/dimitri-5000/internal/sipcore"
 	"github.com/kadenas/dimitri-5000/internal/trace"
 )
@@ -35,17 +37,19 @@ var staticFiles embed.FS
 
 // Server es la interfaz web local.
 type Server struct {
-	addr    string
-	monitor *monitor.Monitor // puede ser nil (modo sin faro)
-	manager *agent.Manager   // puede ser nil (modo monitor sin agentes)
-	trace   *trace.Store     // puede ser nil (sin captura de traza)
-	log     *slog.Logger
+	addr         string
+	monitor      *monitor.Monitor // puede ser nil (modo sin faro)
+	manager      *agent.Manager   // puede ser nil (modo monitor sin agentes)
+	trace        *trace.Store     // puede ser nil (sin captura de traza)
+	scenariosDir string           // carpeta de disco con los escenarios YAML
+	log          *slog.Logger
 }
 
 // New crea el servidor web (no lo arranca todavía). monitor, manager y trace son
 // opcionales: el modo monitor pasa manager=nil; el modo web pasa todos.
-func New(addr string, m *monitor.Monitor, mgr *agent.Manager, tr *trace.Store, log *slog.Logger) *Server {
-	return &Server{addr: addr, monitor: m, manager: mgr, trace: tr, log: log}
+// scenariosDir es la carpeta de donde se listan/cargan los escenarios.
+func New(addr string, m *monitor.Monitor, mgr *agent.Manager, tr *trace.Store, scenariosDir string, log *slog.Logger) *Server {
+	return &Server{addr: addr, monitor: m, manager: mgr, trace: tr, scenariosDir: scenariosDir, log: log}
 }
 
 // Run arranca el servidor HTTP y lo detiene limpiamente cuando ctx se cancela.
@@ -79,6 +83,11 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/trace/calls", s.handleTraceCalls) // GET: llamadas en la traza
 	mux.HandleFunc("/api/trace/clear", s.handleTraceClear) // POST: vaciar la traza
 	mux.HandleFunc("/api/trace", s.handleTrace)            // GET ?call_id=: eventos
+
+	// API de escenarios (Fase 2 en la web).
+	mux.HandleFunc("/api/scenarios", s.handleScenarios)         // GET: disponibles en disco
+	mux.HandleFunc("/api/scenarios/run", s.handleScenarioRun)   // POST: ejecutar uno
+	mux.HandleFunc("/api/scenarios/runs", s.handleScenarioRuns) // GET: ejecuciones y su estado
 
 	// Ficheros estáticos (index.html, css, js) servidos desde el embed.
 	// fs.Sub quita el prefijo "static" para que "/" sirva static/index.html.
@@ -513,6 +522,100 @@ func (s *Server) handleTraceClear(w http.ResponseWriter, r *http.Request) {
 		s.trace.Clear()
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Escenarios (Fase 2 en la web) -------------------------------------------
+
+// handleScenarios lista los escenarios disponibles en la carpeta de disco. Si la
+// carpeta no existe o no se puede leer, devolvemos lista vacía (no es fatal para
+// la web) y lo dejamos anotado en el log.
+func (s *Server) handleScenarios(w http.ResponseWriter, r *http.Request) {
+	list, err := scenario.List(s.scenariosDir)
+	if err != nil {
+		s.log.Warn("no se pudo listar la carpeta de escenarios", "dir", s.scenariosDir, "error", err)
+		s.writeJSON(w, []any{})
+		return
+	}
+	s.writeJSON(w, list)
+}
+
+// scenarioRunReq es el cuerpo JSON para ejecutar un escenario.
+type scenarioRunReq struct {
+	AgentID string `json:"agent_id"` // qué agente lo ejecuta (vacío = "default")
+	File    string `json:"file"`     // nombre del fichero dentro de la carpeta de escenarios
+	Target  string `json:"target"`   // destino (URI) para escenarios uac
+}
+
+// handleScenarioRun carga el escenario indicado y lo ejecuta en el agente elegido.
+func (s *Server) handleScenarioRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "usa POST", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.manager == nil {
+		http.Error(w, "gestor de agentes no disponible", http.StatusServiceUnavailable)
+		return
+	}
+	var req scenarioRunReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "JSON inválido", http.StatusBadRequest)
+		return
+	}
+	if req.File == "" {
+		http.Error(w, "se requiere 'file' (nombre del escenario)", http.StatusBadRequest)
+		return
+	}
+
+	// Seguridad: usamos SOLO el nombre base del fichero, dentro de la carpeta de
+	// escenarios. Así un 'file' con "../" no puede salir de la carpeta (evita leer
+	// ficheros arbitrarios del disco a través de la API).
+	base := filepath.Base(req.File)
+	sc, err := scenario.Load(filepath.Join(s.scenariosDir, base))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Un escenario UAC necesita un destino contra el que llamar.
+	if sc.Role == scenario.RoleUAC && req.Target == "" {
+		http.Error(w, "un escenario uac requiere 'target' (destino), p. ej. sip:192.168.1.10:5060", http.StatusBadRequest)
+		return
+	}
+
+	ctrl := s.controlFor(req.AgentID)
+	if ctrl == nil {
+		http.Error(w, "agente no disponible o parado", http.StatusServiceUnavailable)
+		return
+	}
+	id := ctrl.RunScenario(sc, base, req.Target)
+	s.writeJSON(w, map[string]string{"id": id})
+}
+
+// scenarioRunView es una ejecución de escenario etiquetada con su agente.
+type scenarioRunView struct {
+	AgentID string `json:"agent_id"`
+	control.ScenarioRec
+}
+
+// handleScenarioRuns agrega las ejecuciones de escenario de todos los agentes.
+func (s *Server) handleScenarioRuns(w http.ResponseWriter, r *http.Request) {
+	out := make([]scenarioRunView, 0)
+	if s.manager != nil {
+		for _, info := range s.manager.Snapshot() {
+			a := s.manager.Get(info.ID)
+			if a == nil {
+				continue
+			}
+			ctrl := a.Control()
+			if ctrl == nil {
+				continue
+			}
+			for _, rec := range ctrl.ScenariosSnapshot() {
+				out = append(out, scenarioRunView{AgentID: info.ID, ScenarioRec: rec})
+			}
+		}
+	}
+	s.writeJSON(w, out)
 }
 
 // --- Mensajería SIP (MESSAGE) ------------------------------------------------
