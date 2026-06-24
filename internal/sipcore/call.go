@@ -248,6 +248,7 @@ func (c *Core) Serve(ctx context.Context, network, addr string) error {
 	srv.OnBye(c.onBye)
 	srv.OnCancel(c.onCancel)
 	srv.OnOptions(c.onOptions) // responde a los OPTIONS de keepalive (rol "trunk")
+	srv.OnMessage(c.onMessage) // mensajería SIP (RFC 3428): responde 200 y notifica
 
 	c.log.Info("servidor SIP escuchando", "network", network, "addr", addr)
 	return srv.ListenAndServe(ctx, network, addr)

@@ -263,6 +263,10 @@ main { padding: 24px 28px 60px; max-width: 1280px; }
 }
 .field textarea:focus { border-color: var(--acid); }
 
+/* Panel de mensajería SIP */
+.msg-compose { flex-wrap: wrap; }
+.msg-grid { margin-top: 14px; }
+
 /* Desplegables con el mismo lenguaje visual que los inputs */
 .field select {
   background: transparent;

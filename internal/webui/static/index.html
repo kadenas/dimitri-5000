@@ -12,7 +12,7 @@
     <div class="wordmark">
       <span class="dim">DIMITRI</span><span class="slash">//</span><span class="num">5000</span>
     </div>
-    <div class="sub">SIP&nbsp;TEST&nbsp;SYSTEM · v0.6</div>
+    <div class="sub">SIP&nbsp;TEST&nbsp;SYSTEM · v0.8</div>
     <div class="sysline" id="sysline">
       <span id="clock">--:--:--</span>
     </div>
@@ -77,11 +77,15 @@
       <h2 class="block-title"><span class="idx">02</span> PLACE&nbsp;CALL</h2>
       <form id="call-form" class="panel control">
         <label class="field">
-          <span>AGENT</span>
+          <span>FROM&nbsp;AGENT</span>
           <select id="call-agent"></select>
         </label>
+        <label class="field">
+          <span>TO&nbsp;AGENT</span>
+          <select id="to-agent"></select>
+        </label>
         <label class="field grow">
-          <span>TARGET&nbsp;URI</span>
+          <span>TARGET&nbsp;URI&nbsp;(manual)</span>
           <input type="text" id="to" name="to"
                  placeholder="sip:192.168.1.10:5060" autocomplete="off" />
         </label>
@@ -163,6 +167,51 @@
         </thead>
         <tbody id="trunks">
           <tr class="empty"><td colspan="8">NO TRUNKS</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Bloque: mensajería SIP (MESSAGE) -->
+    <section class="block">
+      <h2 class="block-title"><span class="idx">05</span> MESSAGES</h2>
+      <form id="msg-form" class="panel control msg-compose">
+        <label class="field">
+          <span>FROM&nbsp;AGENT</span>
+          <select id="msg-agent"></select>
+        </label>
+        <label class="field">
+          <span>TO&nbsp;AGENT</span>
+          <select id="msg-to-agent"></select>
+        </label>
+        <label class="field">
+          <span>TO&nbsp;URI&nbsp;(manual)</span>
+          <input type="text" id="msg-to" placeholder="sip:2000@sbc" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>FROM&nbsp;USER</span>
+          <input type="text" id="msg-from-user" placeholder="1000" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>TO&nbsp;USER</span>
+          <input type="text" id="msg-to-user" placeholder="2000" autocomplete="off" />
+        </label>
+        <label class="field grow">
+          <span>MESSAGE</span>
+          <input type="text" id="msg-body" placeholder="Texto del mensaje" autocomplete="off" />
+        </label>
+        <button type="submit" class="btn-dial">SEND ▸</button>
+      </form>
+      <div class="hint" id="msg-hint">MESSAGE (RFC 3428): mensajería instantánea entre agentes o hacia un SBC.</div>
+
+      <table class="grid msg-grid">
+        <thead>
+          <tr>
+            <th>DIR</th><th>AGENT</th><th>PEER</th><th>MESSAGE</th>
+            <th>CODE</th><th>TIME</th>
+          </tr>
+        </thead>
+        <tbody id="messages">
+          <tr class="empty"><td colspan="6">NO MESSAGES</td></tr>
         </tbody>
       </table>
     </section>

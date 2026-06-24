@@ -47,6 +47,9 @@ type Core struct {
 	// uas define cómo responde el servidor a las llamadas entrantes. Se puede
 	// ajustar antes de llamar a Serve; si no, usa valores por defecto sensatos.
 	uas UASPolicy
+
+	// msgHandler se invoca por cada MESSAGE entrante (mensajería SIP). Opcional.
+	msgHandler func(MessageEvent)
 }
 
 // Result resume el resultado de un envío de OPTIONS.

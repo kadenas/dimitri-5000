@@ -1,7 +1,29 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-06-24 (sesión 7: fix From + multi-agente G1+G2 + llamada enriquecida)
+Fecha: 2026-06-24 (sesión 7: + selector agente destino + mensajería SIP MESSAGE)
+
+## Sesión 7 (cont.) — selector TO AGENT (v0.7) y mensajería MESSAGE (v0.8)
+- PLACE CALL: selector FROM AGENT (origen) + TO AGENT (destino): al elegir un
+  agente destino, su IP:puerto rellena dest_host/dest_port (sigue el modo manual/
+  SBC con DEST HOST o TARGET URI). Resolución client-side (agentsCache).
+- Mensajería SIP (RFC 3428):
+  - sipcore/message.go: MessageSpec + Core.SendMessage (MESSAGE vía client.Do) y
+    onMessage (responde 200 + callback). Core.SetMessageHandler + campo msgHandler.
+    Serve registra srv.OnMessage.
+  - control: MessageRec + SendMessage (async, registra code/reason) +
+    RecordIncomingMessage + MessagesSnapshot. agent.Start cablea el handler.
+  - webui: GET /api/messages (agrega por agente) + POST /api/message (simple o
+    enriquecido). UI bloque 05 MESSAGES (compose + historial IN/OUT).
+- Verificado por API: MESSAGE default->uac-2: out 200 OK + in registrado en uac-2.
+
+## Próxima feature elegida: TRAZA DE ESCALERA (ladder)
+- sipgo expone sip.SIPDebugTracer(SIPTracer) — hook GLOBAL que entrega cada
+  mensaje (read/write, transport, laddr, raddr, bytes). Plan: tracer propio que
+  parsea primera línea + Call-ID + CSeq, guarda eventos {time,dir,laddr,raddr,...}
+  agrupados por Call-ID, API /api/trace y diagrama de escalera en la web.
+- Control de llamada (hold/resume/desvío) FACTIBLE vía DialogClientSession.Do
+  (re-INVITE, REFER) — siguiente tras el ladder.
 
 ## Sesión 7 (cont.) — Paso A: llamada "humana" con valores SIP (travesía SBC)
 - sipcore.RichInvite + Core.DialInvite: construye el INVITE con valores concretos.

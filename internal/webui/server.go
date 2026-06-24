@@ -63,6 +63,10 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/call", s.handlePlaceCall)     // POST: lanzar una llamada
 	mux.HandleFunc("/api/call/hangup", s.handleHangup) // POST: colgar una llamada
 
+	// API de mensajería SIP (MESSAGE).
+	mux.HandleFunc("/api/messages", s.handleMessages) // GET: enviados y recibidos
+	mux.HandleFunc("/api/message", s.handleSendMessage) // POST: enviar un MESSAGE
+
 	// Ficheros estáticos (index.html, css, js) servidos desde el embed.
 	// fs.Sub quita el prefijo "static" para que "/" sirva static/index.html.
 	sub, err := fs.Sub(staticFiles, "static")
@@ -374,6 +378,117 @@ func buildCallSpec(req placeCallReq) (control.CallSpec, error) {
 	}
 
 	return control.CallSpec{Invite: inv, Hold: req.Hold, Display: display}, nil
+}
+
+// --- Mensajería SIP (MESSAGE) ------------------------------------------------
+
+// messageView es un mensaje etiquetado con el agente que lo gestiona.
+type messageView struct {
+	AgentID string `json:"agent_id"`
+	control.MessageRec
+}
+
+// handleMessages agrega los mensajes (enviados y recibidos) de todos los agentes.
+func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
+	out := make([]messageView, 0)
+	if s.manager != nil {
+		for _, info := range s.manager.Snapshot() {
+			a := s.manager.Get(info.ID)
+			if a == nil {
+				continue
+			}
+			ctrl := a.Control()
+			if ctrl == nil {
+				continue
+			}
+			for _, m := range ctrl.MessagesSnapshot() {
+				out = append(out, messageView{AgentID: info.ID, MessageRec: m})
+			}
+		}
+	}
+	s.writeJSON(w, out)
+}
+
+// sendMessageReq es el cuerpo JSON para enviar un MESSAGE.
+type sendMessageReq struct {
+	AgentID  string            `json:"agent_id"`
+	To       string            `json:"to"`        // modo simple: URI completa
+	DestHost string            `json:"dest_host"` // modo enriquecido
+	DestPort int               `json:"dest_port"`
+	FromUser string            `json:"from_user"`
+	FromDomain string          `json:"from_domain"`
+	FromDisplay string         `json:"from_display"`
+	ToUser   string            `json:"to_user"`
+	ToDomain string            `json:"to_domain"`
+	Body     string            `json:"body"`
+	Headers  map[string]string `json:"headers"`
+}
+
+// handleSendMessage envía un MESSAGE desde el agente indicado.
+func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "usa POST", http.StatusMethodNotAllowed)
+		return
+	}
+	var req sendMessageReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "JSON inválido", http.StatusBadRequest)
+		return
+	}
+	if req.Body == "" {
+		http.Error(w, "el mensaje no puede ir vacío (body)", http.StatusBadRequest)
+		return
+	}
+
+	spec := sipcore.MessageSpec{
+		DestHost:    req.DestHost,
+		DestPort:    req.DestPort,
+		FromUser:    req.FromUser,
+		FromDomain:  req.FromDomain,
+		FromDisplay: req.FromDisplay,
+		ToUser:      req.ToUser,
+		ToDomain:    req.ToDomain,
+		Body:        req.Body,
+		Headers:     req.Headers,
+	}
+
+	// Destino: enriquecido o parseado de la URI simple 'to'.
+	if spec.DestHost == "" {
+		if req.To == "" {
+			http.Error(w, "indica un destino: 'to' (URI) o 'dest_host'", http.StatusBadRequest)
+			return
+		}
+		host, port, user, err := sipcore.SplitURI(req.To)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		spec.DestHost = host
+		spec.DestPort = port
+		if spec.ToUser == "" {
+			spec.ToUser = user
+		}
+	}
+	if spec.DestPort == 0 {
+		spec.DestPort = 5060
+	}
+
+	display := req.To
+	if display == "" {
+		if spec.ToUser != "" {
+			display = "sip:" + spec.ToUser + "@" + spec.DestHost
+		} else {
+			display = "sip:" + spec.DestHost
+		}
+	}
+
+	ctrl := s.controlFor(req.AgentID)
+	if ctrl == nil {
+		http.Error(w, "agente no disponible o parado", http.StatusServiceUnavailable)
+		return
+	}
+	id := ctrl.SendMessage(spec, display)
+	s.writeJSON(w, map[string]string{"id": id})
 }
 
 // handleHangup cuelga una llamada en curso. Busca el id en todos los agentes.

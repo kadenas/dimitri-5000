@@ -12,7 +12,11 @@ const LABEL = {
 };
 
 // Recordamos qué agente está elegido en PLACE CALL para no perderlo al refrescar.
-let selectedAgent = "default";
+let selectedAgent = "default";   // agente que ORIGINA la llamada
+let selectedToAgent = "";        // agente DESTINO ("" = destino manual / externo)
+let selectedMsgAgent = "default"; // agente que ENVÍA el mensaje
+let selectedMsgToAgent = "";      // agente DESTINO del mensaje
+let agentsCache = [];            // última lista de agentes (para resolver destino)
 
 // Escapa texto para no inyectar HTML al construir filas.
 function esc(s) {
@@ -98,6 +102,42 @@ async function agentAction(accion, id) {
   if (!res.ok) throw new Error(await res.text());
 }
 
+// ---- Mensajería SIP (MESSAGE) ----
+
+async function sendMessage(payload) {
+  const res = await fetch("/api/message", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+function renderMessages(datos) {
+  const tbody = document.getElementById("messages");
+  if (!datos || datos.length === 0) {
+    tbody.innerHTML = '<tr class="empty"><td colspan="6">NO MESSAGES</td></tr>';
+    return;
+  }
+  // Las más recientes arriba.
+  tbody.innerHTML = datos.slice().reverse().map((m) => {
+    const dir = m.dir === "in" ? '<span class="badge s-up">IN</span>'
+                               : '<span class="badge s-dialing">OUT</span>';
+    let code = "—";
+    if (m.error) code = '<span class="s-failed">ERR</span>';
+    else if (m.code) code = esc(codeText(m.code, m.reason));
+    return "<tr>" +
+      "<td>" + dir + "</td>" +
+      "<td>" + esc(m.agent_id) + "</td>" +
+      "<td>" + esc(m.peer) + "</td>" +
+      "<td>" + esc(m.body) + "</td>" +
+      "<td>" + code + "</td>" +
+      "<td>" + hhmmss(m.timestamp) + "</td>" +
+      "</tr>";
+  }).join("");
+}
+
 // ---- Pintado de tablas ----
 
 function renderAgents(datos) {
@@ -134,17 +174,47 @@ function renderAgents(datos) {
   });
 }
 
-// Rellena el selector de agente de PLACE CALL conservando la elección previa.
+// Rellena los selectores de agente (origen y destino) conservando la elección.
 function renderAgentSelector(datos) {
+  agentsCache = datos || [];
+  const ids = agentsCache.map((a) => a.id);
+
+  // --- Origen (FROM AGENT): quién lanza la llamada ---
   const sel = document.getElementById("call-agent");
-  const ids = (datos || []).map((a) => a.id);
-  // Si el agente elegido ya no existe, caemos al primero disponible.
   if (!ids.includes(selectedAgent)) selectedAgent = ids[0] || "default";
-  sel.innerHTML = (datos || []).map((a) => {
+  sel.innerHTML = agentsCache.map((a) => {
     const marca = a.state === "running" ? "" : " (stopped)";
     return '<option value="' + esc(a.id) + '">' + esc(a.id) + marca + "</option>";
   }).join("");
   sel.value = selectedAgent;
+
+  // --- Destino (TO AGENT): a qué agente se llama. Primera opción = manual/externo ---
+  fillDestSelect("to-agent", selectedToAgent);
+
+  // --- Selectores equivalentes del panel de mensajes ---
+  const mo = document.getElementById("msg-agent");
+  if (mo) {
+    if (!ids.includes(selectedMsgAgent)) selectedMsgAgent = ids[0] || "default";
+    mo.innerHTML = sel.innerHTML; // mismas opciones que el origen de llamadas
+    mo.value = selectedMsgAgent;
+  }
+  fillDestSelect("msg-to-agent", selectedMsgToAgent);
+}
+
+// fillDestSelect rellena un desplegable de agente DESTINO (con opción manual).
+function fillDestSelect(selId, current) {
+  const dst = document.getElementById(selId);
+  if (!dst) return;
+  const ids = agentsCache.map((a) => a.id);
+  if (current && !ids.includes(current)) current = "";
+  const opciones = ['<option value="">— manual / externo —</option>'].concat(
+    agentsCache.map((a) => {
+      const dirn = esc(a.bind_ip) + ":" + esc(a.sip_port);
+      return '<option value="' + esc(a.id) + '">' + esc(a.id) + " · " + dirn + "</option>";
+    })
+  );
+  dst.innerHTML = opciones.join("");
+  dst.value = current;
 }
 
 function renderCalls(datos) {
@@ -203,15 +273,17 @@ function renderTrunks(datos) {
 async function refresh() {
   const conn = document.getElementById("conn");
   try {
-    const [agents, calls, trunks] = await Promise.all([
+    const [agents, calls, trunks, messages] = await Promise.all([
       fetch("/api/agents").then((r) => r.json()),
       fetch("/api/calls").then((r) => r.json()),
       fetch("/api/status").then((r) => r.json()),
+      fetch("/api/messages").then((r) => r.json()),
     ]);
     renderAgents(agents);
     renderAgentSelector(agents);
     renderCalls(calls);
     renderTrunks(trunks);
+    renderMessages(messages);
     conn.textContent = "ONLINE";
     conn.className = "conn ok";
   } catch (e) {
@@ -228,9 +300,72 @@ function tickClock() {
 
 // ---- Arranque ----
 
-// Recordar el agente elegido al cambiarlo en el desplegable.
+// Recordar el agente de origen elegido al cambiarlo.
 document.getElementById("call-agent").addEventListener("change", (ev) => {
   selectedAgent = ev.target.value;
+});
+
+// Recordar el agente destino elegido al cambiarlo.
+document.getElementById("to-agent").addEventListener("change", (ev) => {
+  selectedToAgent = ev.target.value;
+});
+
+// Selectores del panel de mensajes.
+document.getElementById("msg-agent").addEventListener("change", (ev) => {
+  selectedMsgAgent = ev.target.value;
+});
+document.getElementById("msg-to-agent").addEventListener("change", (ev) => {
+  selectedMsgToAgent = ev.target.value;
+});
+
+// Envío de un MESSAGE.
+document.getElementById("msg-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const hint = document.getElementById("msg-hint");
+  const agentId = document.getElementById("msg-agent").value || "default";
+  const toAgentId = document.getElementById("msg-to-agent").value;
+  const body = val("msg-body");
+  const to = val("msg-to");
+
+  if (!body) {
+    hint.textContent = "Escribe el texto del mensaje.";
+    hint.className = "hint error";
+    return;
+  }
+
+  let destHost = "";
+  let destPort = 0;
+  const toAgent = agentsCache.find((a) => a.id === toAgentId);
+  if (toAgent) {
+    destHost = toAgent.bind_ip;
+    destPort = toAgent.sip_port;
+  }
+  if (!toAgent && !to) {
+    hint.textContent = "Elige un TO AGENT o indica una TO URI.";
+    hint.className = "hint error";
+    return;
+  }
+
+  const payload = {
+    agent_id: agentId,
+    to: toAgent ? "" : to,
+    dest_host: destHost,
+    dest_port: destPort,
+    from_user: val("msg-from-user"),
+    to_user: val("msg-to-user"),
+    body,
+  };
+
+  try {
+    await sendMessage(payload);
+    hint.textContent = "Mensaje enviado.";
+    hint.className = "hint";
+    document.getElementById("msg-body").value = "";
+    refresh();
+  } catch (e) {
+    hint.textContent = "Error: " + e.message;
+    hint.className = "hint error";
+  }
 });
 
 // Mostrar/ocultar el bloque de valores SIP avanzados.
@@ -245,13 +380,23 @@ document.getElementById("call-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const hint = document.getElementById("form-hint");
   const agentId = document.getElementById("call-agent").value || "default";
+  const toAgentId = document.getElementById("to-agent").value;
   const to = val("to");
-  const destHost = val("dest-host");
+  let destHost = val("dest-host");
+  let destPort = parseInt(val("dest-port"), 10) || 0;
+
+  // Si se eligió un AGENTE DESTINO, su IP:puerto manda sobre lo manual.
+  const toAgent = agentsCache.find((a) => a.id === toAgentId);
+  if (toAgent) {
+    destHost = toAgent.bind_ip;
+    destPort = toAgent.sip_port;
+  }
+
   const hold = parseInt(document.getElementById("hold").value, 10) || 0;
 
-  // Hace falta un destino: o la URI simple o el DEST HOST (SBC).
-  if (!to && !destHost) {
-    hint.textContent = "Indica un destino: TARGET URI o DEST HOST.";
+  // Hace falta un destino: agente destino, DEST HOST (SBC) o la URI simple.
+  if (!toAgent && !to && !destHost) {
+    hint.textContent = "Elige un TO AGENT, o indica DEST HOST / TARGET URI.";
     hint.className = "hint error";
     return;
   }
@@ -259,9 +404,10 @@ document.getElementById("call-form").addEventListener("submit", async (ev) => {
   const payload = {
     agent_id: agentId,
     hold,
-    to,
+    // Si hay agente destino o dest host, no mandamos 'to' para que prevalezca el destino.
+    to: toAgent || destHost ? "" : to,
     dest_host: destHost,
-    dest_port: parseInt(val("dest-port"), 10) || 0,
+    dest_port: destPort,
     from_user: val("from-user"),
     from_domain: val("from-domain"),
     from_display: val("from-display"),

@@ -43,7 +43,19 @@ type CallRec struct {
 	invite sipcore.RichInvite
 }
 
-// Controller gestiona el motor y el registro de llamadas.
+// MessageRec es el registro de un MESSAGE (enviado o recibido) para mostrarlo.
+type MessageRec struct {
+	ID        string `json:"id"`
+	Dir       string `json:"dir"`        // "out" (enviado) | "in" (recibido)
+	Peer      string `json:"peer"`       // a quién/de quién (To si out, From si in)
+	Body      string `json:"body"`       // texto del mensaje
+	Code      int    `json:"code"`       // código de respuesta (solo out)
+	Reason    string `json:"reason"`     // razón de la respuesta (solo out)
+	Error     string `json:"error,omitempty"`
+	Timestamp string `json:"timestamp"`  // hora del evento
+}
+
+// Controller gestiona el motor y el registro de llamadas y mensajes.
 type Controller struct {
 	core *sipcore.Core
 	log  *slog.Logger
@@ -52,6 +64,8 @@ type Controller struct {
 	mu    sync.RWMutex
 	calls map[string]*CallRec
 	order []string // ids en orden de creación (las más recientes al final)
+
+	msgs []MessageRec // mensajes SIP enviados y recibidos (orden de aparición)
 }
 
 // New crea el controlador. ctx es el contexto de vida de la app (al cancelarse,
@@ -162,6 +176,59 @@ func (c *Controller) run(rec *CallRec, holdSeconds int) {
 		r.EndedAt = now()
 	})
 	c.log.Info("llamada finalizada", "id", rec.ID)
+}
+
+// SendMessage envía un MESSAGE SIP con los valores dados y registra el resultado.
+// display es el texto a mostrar como destinatario (p. ej. "2000@sbc"). Devuelve el
+// id del registro.
+func (c *Controller) SendMessage(spec sipcore.MessageSpec, display string) string {
+	id := genID()
+	rec := MessageRec{
+		ID: id, Dir: "out", Peer: display, Body: spec.Body, Timestamp: now(),
+	}
+
+	// Enviamos con un timeout acotado, en segundo plano para no bloquear la web.
+	go func() {
+		ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+		defer cancel()
+		res, err := c.core.SendMessage(ctx, spec)
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		for i := range c.msgs {
+			if c.msgs[i].ID == id {
+				if err != nil {
+					c.msgs[i].Error = err.Error()
+				} else {
+					c.msgs[i].Code = res.Code
+					c.msgs[i].Reason = res.Reason
+				}
+				break
+			}
+		}
+	}()
+
+	c.mu.Lock()
+	c.msgs = append(c.msgs, rec)
+	c.mu.Unlock()
+	return id
+}
+
+// RecordIncomingMessage guarda un MESSAGE entrante (lo invoca el motor SIP).
+func (c *Controller) RecordIncomingMessage(ev sipcore.MessageEvent) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.msgs = append(c.msgs, MessageRec{
+		ID: genID(), Dir: "in", Peer: ev.From, Body: ev.Body, Timestamp: now(),
+	})
+}
+
+// MessagesSnapshot devuelve una copia del registro de mensajes.
+func (c *Controller) MessagesSnapshot() []MessageRec {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make([]MessageRec, len(c.msgs))
+	copy(out, c.msgs)
+	return out
 }
 
 // Hangup solicita colgar una llamada en curso. Devuelve true si existía.

@@ -111,6 +111,8 @@ func (a *Agent) Start(parent context.Context) error {
 
 	a.core.SetUASPolicy(a.spec.policy())
 	a.ctrl = control.New(ctx, a.core, a.log)
+	// Los MESSAGE entrantes se registran en el control del agente (antes de Serve).
+	a.core.SetMessageHandler(a.ctrl.RecordIncomingMessage)
 
 	addr := net.JoinHostPort(a.spec.BindIP, strconv.Itoa(a.spec.SIPPort))
 	go func() {
