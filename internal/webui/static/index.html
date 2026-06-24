@@ -12,17 +12,74 @@
     <div class="wordmark">
       <span class="dim">DIMITRI</span><span class="slash">//</span><span class="num">5000</span>
     </div>
-    <div class="sub">SIP&nbsp;TEST&nbsp;SYSTEM · v0.4</div>
+    <div class="sub">SIP&nbsp;TEST&nbsp;SYSTEM · v0.5</div>
     <div class="sysline" id="sysline">
       <span id="clock">--:--:--</span>
     </div>
   </header>
 
   <main>
+    <!-- Bloque: agentes (instancias SIP) -->
+    <section class="block">
+      <h2 class="block-title"><span class="idx">01</span> AGENTS</h2>
+      <table class="grid">
+        <thead>
+          <tr>
+            <th>ID</th><th>NAME</th><th>SIGNALING</th><th>TRANSPORT</th>
+            <th>STATE</th><th class="right">ACTION</th>
+          </tr>
+        </thead>
+        <tbody id="agents">
+          <tr class="empty"><td colspan="6">NO AGENTS</td></tr>
+        </tbody>
+      </table>
+
+      <!-- Alta de un agente nuevo -->
+      <form id="agent-form" class="panel control agent-add">
+        <label class="field">
+          <span>ID</span>
+          <input type="text" id="ag-id" placeholder="uac-2" autocomplete="off" />
+        </label>
+        <label class="field grow">
+          <span>NAME</span>
+          <input type="text" id="ag-name" placeholder="Agente UAC 2" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>BIND&nbsp;IP</span>
+          <input type="text" id="ag-ip" placeholder="192.168.0.128" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>PORT</span>
+          <input type="number" id="ag-port" placeholder="5074" min="1" max="65535" />
+        </label>
+        <label class="field">
+          <span>TRANSPORT</span>
+          <select id="ag-transport">
+            <option value="udp">UDP</option>
+            <option value="tcp">TCP</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>ANSWER</span>
+          <select id="ag-answer">
+            <option value="200">200 OK</option>
+            <option value="486">486 BUSY</option>
+            <option value="603">603 DECLINE</option>
+          </select>
+        </label>
+        <button type="submit" class="btn-dial">+ ADD</button>
+      </form>
+      <div class="hint" id="agent-hint">Cada agente es una instancia SIP independiente (su IP:puerto y rol).</div>
+    </section>
+
     <!-- Bloque: lanzar llamada -->
     <section class="block">
-      <h2 class="block-title"><span class="idx">01</span> PLACE&nbsp;CALL</h2>
+      <h2 class="block-title"><span class="idx">02</span> PLACE&nbsp;CALL</h2>
       <form id="call-form" class="panel control">
+        <label class="field">
+          <span>AGENT</span>
+          <select id="call-agent"></select>
+        </label>
         <label class="field grow">
           <span>TARGET&nbsp;URI</span>
           <input type="text" id="to" name="to"
@@ -39,23 +96,23 @@
 
     <!-- Bloque: llamadas en vivo -->
     <section class="block">
-      <h2 class="block-title"><span class="idx">02</span> CALLS</h2>
+      <h2 class="block-title"><span class="idx">03</span> CALLS</h2>
       <table class="grid">
         <thead>
           <tr>
-            <th>ID</th><th>TARGET</th><th>STATE</th><th>CODE</th>
+            <th>AGENT</th><th>ID</th><th>TARGET</th><th>STATE</th><th>CODE</th>
             <th>STARTED</th><th>ANSWERED</th><th class="right">ACTION</th>
           </tr>
         </thead>
         <tbody id="calls">
-          <tr class="empty"><td colspan="7">NO ACTIVE CALLS</td></tr>
+          <tr class="empty"><td colspan="8">NO ACTIVE CALLS</td></tr>
         </tbody>
       </table>
     </section>
 
     <!-- Bloque: monitor de troncales -->
     <section class="block">
-      <h2 class="block-title"><span class="idx">03</span> TRUNKS&nbsp;/&nbsp;OPTIONS</h2>
+      <h2 class="block-title"><span class="idx">04</span> TRUNKS&nbsp;/&nbsp;OPTIONS</h2>
       <table class="grid">
         <thead>
           <tr>

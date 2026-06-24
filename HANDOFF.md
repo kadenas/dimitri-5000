@@ -1,7 +1,23 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-06-24 (sesión 7: fix From RFC + arranque modelo multi-agente)
+Fecha: 2026-06-24 (sesión 7: fix From RFC + modelo multi-agente G1+G2)
+
+## Sesión 7 (cont.) — G2: API y panel de AGENTES en la web
+- webui ahora habla con el Manager (no con un control único):
+  - GET/POST /api/agents (lista | alta+arranque), POST /api/agents/start|stop|remove.
+  - /api/call lleva agent_id (qué agente origina); /api/calls AGREGA las llamadas
+    de todos los agentes etiquetadas con agent_id; hangup busca en todos.
+  - nil-safe: en modo monitor (manager=nil) /api/agents devuelve [].
+- UI rediseñada: bloque 01 AGENTS (tabla + alta con id/name/ip/puerto/transporte/
+  answer_code + acciones START/STOP/REMOVE), 02 PLACE CALL con selector de AGENT,
+  03 CALLS con columna AGENT, 04 TRUNKS. CSS para estados running/stopped y botones
+  mini. Versión visible v0.5.
+- Verificado por API en un SOLO proceso: alta de 'uac-2' en :5072 junto al 'default'
+  en :5070, llamada default->uac-2 (established->ended), stop/remove y rechazo de id
+  duplicado (400). Falta repaso VISUAL en navegador (la API está sólida).
+- Conocido: si el puerto de un agente nuevo está ocupado, Serve falla en su goroutine
+  pero el agente queda 'running' (el bind es asíncrono). Mejorable en G2.1.
 
 ## Sesión 7 — fix From (RFC) y modelo "un proceso, varios agentes" (G1)
 - **#0 Fix From (commit e706102):** sipgo ponía el From con hostname "localhost"

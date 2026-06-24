@@ -171,7 +171,7 @@ func runMonitor(ctx context.Context, core *sipcore.Core, cfg config.Config, webA
 	farol.Start(ctx)
 	log.Info("faro iniciado", "troncales", len(cfg.Targets), "sip", addr)
 
-	srv := webui.New(webAddr, farol, nil, log)
+	srv := webui.New(webAddr, farol, nil, log) // modo monitor: sin agentes
 	log.Info("interfaz web disponible", "url", "http://"+webAddr)
 	if err := srv.Run(ctx); err != nil {
 		log.Error("la interfaz web terminó con error", "error", err)
@@ -212,10 +212,7 @@ func runWeb(ctx context.Context, core *sipcore.Core, cfg config.Config, webAddr,
 	farol := monitor.New(core, cfg.Targets, cfg.Monitor, log)
 	farol.Start(ctx)
 
-	// El control de llamadas lo expone el agente por defecto.
-	ctrl := mgr.Get("default").Control()
-
-	srv := webui.New(webAddr, farol, ctrl, log)
+	srv := webui.New(webAddr, farol, mgr, log)
 	logWebURLs(webAddr, ip, log)
 	log.Info("motor SIP", "sip", addr, "transport", transport)
 	if err := srv.Run(ctx); err != nil {

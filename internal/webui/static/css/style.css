@@ -211,7 +211,44 @@ main { padding: 24px 28px 60px; max-width: 1280px; }
 .s-degraded { color: var(--degraded); }
 .s-down, .s-failed { color: var(--down); }
 .s-ended { color: var(--ended); }
-.s-unknown { color: var(--muted); }
+.s-unknown, .s-stopped { color: var(--muted); }
+.s-running { color: var(--up); }
+
+/* Botones pequeños de acción (agentes) dentro de la tabla */
+.btn-mini {
+  border: 1px solid var(--muted);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.btn-mini:hover { border-color: var(--acid); color: var(--acid); }
+.btn-mini.go { border-color: var(--up); color: var(--up); }
+.btn-mini.go:hover { background: var(--up); color: #000; }
+.btn-mini.danger { border-color: var(--down); color: var(--down); }
+.btn-mini.danger:hover { background: var(--down); color: #000; }
+
+/* El formulario de alta de agente, una segunda fila de campos bajo la tabla */
+.agent-add { margin-top: 14px; flex-wrap: wrap; }
+
+/* Desplegables con el mismo lenguaje visual que los inputs */
+.field select {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid var(--line-strong);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 18px;
+  padding: 6px 0;
+  outline: none;
+  cursor: pointer;
+}
+.field select:focus { border-bottom-color: var(--acid); }
+.field select option { background: var(--bg); color: var(--ink); }
 
 /* Botón colgar dentro de la tabla */
 .btn-hangup {
