@@ -89,13 +89,18 @@ func New(bindIP string, sipPort int, userAgent, fromDomain string, log *slog.Log
 		return nil, fmt.Errorf("creando user agent: %w", err)
 	}
 
-	// WithClientHostname fija la IP local que sipgo pondrá en Via/Contact.
-	// WithClientPort fija el puerto de ORIGEN del cliente: lo igualamos al puerto
-	// de escucha del servidor para que las peticiones dentro del diálogo (BYE,
-	// ACK) regresen a un único socket conocido.
+	// Señalización SIMÉTRICA: queremos que TODO lo que enviamos (OPTIONS, INVITE,
+	// MESSAGE, ACK, BYE) salga del MISMO socket en el que escuchamos (bindIP:sipPort),
+	// no de un puerto efímero. Esto es importante contra SBC/PBX, que suelen
+	// exigir que el puerto de origen coincida con el anunciado.
+	//   - WithClientHostname: IP que aparece en Via/Contact.
+	//   - WithClientConnectionAddr: fuerza req.Laddr = bindIP:sipPort, con lo que
+	//     sipgo REUTILIZA la conexión de escucha al enviar (origen = sipPort).
+	// (Antes usábamos WithClientPort, que solo fijaba el puerto del Via y, además,
+	//  desactivaba la reutilización de conexión, provocando puertos efímeros.)
 	client, err := sipgo.NewClient(ua,
 		sipgo.WithClientHostname(bindIP),
-		sipgo.WithClientPort(sipPort),
+		sipgo.WithClientConnectionAddr(fmt.Sprintf("%s:%d", bindIP, sipPort)),
 	)
 	if err != nil {
 		ua.Close()
