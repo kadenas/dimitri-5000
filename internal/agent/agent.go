@@ -95,6 +95,15 @@ func (a *Agent) Start(parent context.Context) error {
 		return nil
 	}
 
+	// Comprobación de bind SÍNCRONA antes de nada: si el puerto está en uso o la
+	// IP no es local de esta máquina, fallamos aquí con un error claro (en vez de
+	// dejar un agente "running" que en realidad no escucha). El Serve de sipgo
+	// abre el socket en una goroutine, así que sin esto el error pasaría inadvertido.
+	if err := checkBindAvailable(a.spec.Transport, a.spec.BindIP, a.spec.SIPPort); err != nil {
+		return fmt.Errorf("agente %q: no se puede escuchar en %s:%d (%s): %w",
+			a.spec.ID, a.spec.BindIP, a.spec.SIPPort, a.spec.Transport, err)
+	}
+
 	// Si no adoptamos un Core, lo creamos a partir de la Spec (y lo cerraremos al parar).
 	if a.core == nil {
 		core, err := sipcore.New(a.spec.BindIP, a.spec.SIPPort, a.spec.UserAgent, a.spec.FromDomain, a.log)
@@ -162,6 +171,29 @@ func (a *Agent) Core() *sipcore.Core {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.core
+}
+
+// checkBindAvailable comprueba que podemos abrir realmente ese ip:puerto en esta
+// máquina: detecta "puerto en uso" y "IP no asignable" (no es local). Abre el
+// socket un instante y lo cierra; el Serve posterior lo reabrirá.
+//
+// Hay una ventana de carrera mínima (otro proceso podría coger el puerto entre el
+// cierre y el Serve), aceptable para una herramienta de pruebas; el Serve lo
+// reportaría igualmente en el log.
+func checkBindAvailable(transport, ip string, port int) error {
+	addr := net.JoinHostPort(ip, strconv.Itoa(port))
+	if transport == "tcp" {
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			return err
+		}
+		return l.Close()
+	}
+	c, err := net.ListenPacket("udp", addr)
+	if err != nil {
+		return err
+	}
+	return c.Close()
 }
 
 // Info es la foto del estado de un agente para la interfaz web.
