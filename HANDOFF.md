@@ -1,7 +1,27 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-06-24 (sesión 6: faro dinámico — alta/baja de trunks en caliente)
+Fecha: 2026-06-24 (sesión 7: fix From RFC + arranque modelo multi-agente)
+
+## Sesión 7 — fix From (RFC) y modelo "un proceso, varios agentes" (G1)
+- **#0 Fix From (commit e706102):** sipgo ponía el From con hostname "localhost"
+  por defecto (rechazable por PBX/SBC). sipcore.New recibe ahora `fromDomain`
+  (vacío = IP de bind) y lo fija con WithUserAgentHostname. Nuevo campo config
+  `from_domain` y flag `--from-domain` (flag > config > IP). Verificado: el From
+  sale `sip:dimitri-5000@<IP_real>`. El Contact ya estaba bien.
+- **Decisión de producto (memoria actualizada):** la herramienta evoluciona a
+  "un proceso, varios agentes" (una web gestiona varios endpoints SIP UAC/UAS) y
+  empaquetado final con **Wails** (app de escritorio reutilizando la misma web).
+- **G1 (backend multi-agente) COMPLETO:**
+  - internal/agent: `Agent` (Core + política UAS + control, con Start/Stop; puede
+    CREAR su Core o ADOPTAR uno existente) y `Manager` (CRUD + Start/Stop/Remove +
+    Snapshot, orden estable, validación de Spec). Tests verdes (manager_test.go).
+  - main runWeb refactorizado: crea un Manager con un agente "default" que ADOPTA
+    el Core actual → comportamiento idéntico (verificado e2e: llamada OK). El faro
+    comparte el Core; la web usa el control del agente por defecto.
+- Pendiente G2: API /api/agents + panel AGENTS en la web (alta/activar/parar
+  agentes), y reencajar SETTINGS/TRUNKS/escenarios en el modelo por agente.
+  Luego G3: empaquetado Wails. Ver [[vision-sipp-replacement]].
 
 ## Estado actual
 - Proyecto en Go con base v0 funcional: núcleo SIP que envía OPTIONS (UAC),

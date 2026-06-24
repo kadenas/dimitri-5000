@@ -20,8 +20,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kadenas/dimitri-5000/internal/agent"
 	"github.com/kadenas/dimitri-5000/internal/config"
-	"github.com/kadenas/dimitri-5000/internal/control"
 	"github.com/kadenas/dimitri-5000/internal/monitor"
 	"github.com/kadenas/dimitri-5000/internal/netutil"
 	"github.com/kadenas/dimitri-5000/internal/runner"
@@ -120,7 +120,7 @@ func main() {
 	case "scenario":
 		runScenario(ctx, core, resolvedIP, resolvedPort, resolvedTransport, *scenarioFile, *to, log)
 	case "web":
-		runWeb(ctx, core, cfg, *webAddr, resolvedIP, resolvedPort, resolvedTransport, log)
+		runWeb(ctx, core, cfg, *webAddr, resolvedIP, resolvedPort, resolvedTransport, resolvedFromDomain, log)
 	default:
 		log.Error("modo desconocido", "mode", *mode, "válidos", "monitor|uas|uac")
 		os.Exit(2)
@@ -178,24 +178,42 @@ func runMonitor(ctx context.Context, core *sipcore.Core, cfg config.Config, webA
 	}
 }
 
-// runWeb es el modo "estación de trabajo": arranca el servidor SIP (para recibir
-// y para el tráfico dentro del diálogo), el faro de troncales y la web de control,
-// que permite lanzar y seguir llamadas desde el navegador.
-func runWeb(ctx context.Context, core *sipcore.Core, cfg config.Config, webAddr, ip string, port int, transport string, log *slog.Logger) {
-	// Servidor SIP en segundo plano (rol UAS + tráfico in-dialog de las salientes).
-	addr := joinHostPort(ip, port)
-	go func() {
-		if err := core.Serve(ctx, transport, addr); err != nil && ctx.Err() == nil {
-			log.Error("servidor SIP (web) terminó con error", "error", err)
-		}
-	}()
+// runWeb es el modo "estación de trabajo": arranca el motor SIP, el faro de
+// troncales y la web de control. Desde G1, el motor SIP lo gestiona un Manager de
+// agentes: aquí creamos UN agente por defecto que ADOPTA el Core ya montado (mismo
+// comportamiento que antes), dejando la puerta abierta a añadir más agentes en
+// caliente desde la web (G2).
+func runWeb(ctx context.Context, core *sipcore.Core, cfg config.Config, webAddr, ip string, port int, transport, fromDomain string, log *slog.Logger) {
+	addr := joinHostPort(ip, port) // dirección SIP (solo para el log informativo)
 
-	// Faro de troncales (alimenta el panel de estado).
+	// Gestor de agentes con un agente por defecto que adopta el Core actual.
+	mgr := agent.NewManager(log)
+	mgr.Bind(ctx)
+	defaultSpec := agent.Spec{
+		ID:         "default",
+		Name:       "Agente principal",
+		BindIP:     ip,
+		SIPPort:    port,
+		Transport:  transport,
+		FromDomain: fromDomain,
+		UserAgent:  "dimitri-5000",
+		AnswerCode: 200, // por defecto contesta las llamadas entrantes
+	}
+	if _, err := mgr.AddWithCore(defaultSpec, core); err != nil {
+		log.Error("no se pudo crear el agente por defecto", "error", err)
+		return
+	}
+	if err := mgr.Start("default"); err != nil {
+		log.Error("no se pudo arrancar el agente por defecto", "error", err)
+		return
+	}
+
+	// Faro de troncales (alimenta el panel de estado). Comparte el Core con el agente.
 	farol := monitor.New(core, cfg.Targets, cfg.Monitor, log)
 	farol.Start(ctx)
 
-	// Controlador de llamadas (lo usa la web para lanzar/seguir llamadas).
-	ctrl := control.New(ctx, core, log)
+	// El control de llamadas lo expone el agente por defecto.
+	ctrl := mgr.Get("default").Control()
 
 	srv := webui.New(webAddr, farol, ctrl, log)
 	logWebURLs(webAddr, ip, log)
