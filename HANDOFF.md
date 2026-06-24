@@ -1,7 +1,7 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-06-24 (sesión 5: trunk OPTIONS, config persistente, multi-instancia)
+Fecha: 2026-06-24 (sesión 6: faro dinámico — alta/baja de trunks en caliente)
 
 ## Estado actual
 - Proyecto en Go con base v0 funcional: núcleo SIP que envía OPTIONS (UAC),
@@ -96,9 +96,24 @@ dimitri-5000 --mode uac --to sip:<IP_DEL_SBC>:5060 # apunta al SBC, que reenvía
   - Decidido: cambios de nuestro puerto/IP se aplican AL REINICIAR.
   - Test store_test.go en verde.
 
+## Sesión 6 — faro dinámico (paso 1 del bloque "app configurable") COMPLETO
+- internal/monitor refactorizado: cada troncal se vigila en su PROPIA goroutine
+  con su context.CancelFunc, todas colgando de un contexto raíz fijado en Start.
+- Métodos nuevos en caliente:
+  - AddTarget(t): valida, rechaza id duplicado/inválido y arranca su goroutine.
+  - RemoveTarget(id): cancela su goroutine y olvida su estado (false si no existe).
+  - Sync(targets): reconcilia la lista viva con una deseada (alta/baja/reinicio si
+    cambió host/puerto/transporte). Será la vía que use la API web / config.Store.
+- Estado interno pasa a mapas (states/cancels/targets) + slice `order` para que
+  Snapshot mantenga orden estable. Guarda en probe: si la troncal se retiró con un
+  sondeo en vuelo, sale sin tocar nada (evita panic).
+- Firma de New intacta → main.go sin cambios; comportamiento de arranque conservado.
+- monitor_test.go nuevo (TestAddRemoveTarget, TestSyncReconcilia). Toda la batería
+  en verde; go vet limpio. (-race no disponible: requiere cgo/compilador C.)
+
 ## Próximos pasos (bloque "app configurable", en curso)
-1. Faro dinámico: refactor del monitor para añadir/quitar trunks en caliente
-   leyendo del config.Store (cada trunk con su goroutine y cancelación).
+1. Conectar config.Store ↔ faro: que AddTarget/RemoveTarget del Store empujen al
+   monitor (Sync o llamadas directas). Wiring en main (runWeb/runMonitor).
 2. API web: GET/POST /api/trunks, DELETE /api/trunks/{id}, GET/PUT /api/settings.
 3. Panel web SETTINGS (estilo TDR): alta/baja de trunks y edición de señalización
    (aviso "reinicia para aplicar el puerto").
