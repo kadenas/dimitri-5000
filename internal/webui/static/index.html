@@ -12,7 +12,7 @@
     <div class="wordmark">
       <span class="dim">DIMITRI</span><span class="slash">//</span><span class="num">5000</span>
     </div>
-    <div class="sub">SIP&nbsp;TEST&nbsp;SYSTEM · v0.9</div>
+    <div class="sub">SIP&nbsp;TEST&nbsp;SYSTEM · v0.10</div>
     <div class="sysline" id="sysline">
       <span id="clock">--:--:--</span>
     </div>
@@ -155,20 +155,54 @@
       </table>
     </section>
 
-    <!-- Bloque: monitor de troncales -->
+    <!-- Bloque: trunks remotos por agente (monitorizados con OPTIONS) -->
     <section class="block">
       <h2 class="block-title"><span class="idx">04</span> TRUNKS&nbsp;/&nbsp;OPTIONS</h2>
       <table class="grid">
         <thead>
           <tr>
-            <th>TRUNK</th><th>DESTINATION</th><th>STATE</th>
+            <th>AGENT</th><th>TRUNK</th><th>DESTINATION</th><th>STATE</th>
             <th>CODE</th><th>RTT</th><th>OK</th><th>OTHER</th><th>TIMEOUT</th>
+            <th class="right">ACTION</th>
           </tr>
         </thead>
         <tbody id="trunks">
-          <tr class="empty"><td colspan="8">NO TRUNKS</td></tr>
+          <tr class="empty"><td colspan="10">NO TRUNKS</td></tr>
         </tbody>
       </table>
+
+      <!-- Alta de un trunk remoto, monitorizado desde el agente elegido -->
+      <form id="trunk-form" class="panel control trunk-add">
+        <label class="field">
+          <span>FROM&nbsp;AGENT</span>
+          <select id="tr-agent"></select>
+        </label>
+        <label class="field">
+          <span>ID</span>
+          <input type="text" id="tr-id" placeholder="sbc-1" autocomplete="off" />
+        </label>
+        <label class="field grow">
+          <span>NAME</span>
+          <input type="text" id="tr-name" placeholder="SBC operador" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>HOST&nbsp;(remoto)</span>
+          <input type="text" id="tr-host" placeholder="10.10.0.5" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>PORT</span>
+          <input type="number" id="tr-port" placeholder="5060" min="1" max="65535" />
+        </label>
+        <label class="field">
+          <span>TRANSPORT</span>
+          <select id="tr-transport">
+            <option value="udp">UDP</option>
+            <option value="tcp">TCP</option>
+          </select>
+        </label>
+        <button type="submit" class="btn-dial">+ ADD</button>
+      </form>
+      <div class="hint" id="trunk-hint">Cada trunk se prueba con OPTIONS desde el agente elegido (origen = su puerto).</div>
     </section>
 
     <!-- Bloque: mensajería SIP (MESSAGE) -->

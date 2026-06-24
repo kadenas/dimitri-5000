@@ -13,12 +13,14 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/kadenas/dimitri-5000/internal/config"
 	"github.com/kadenas/dimitri-5000/internal/sipcore"
 )
 
 // Manager gestiona el conjunto de agentes.
 type Manager struct {
-	log *slog.Logger
+	log    *slog.Logger
+	monCfg config.MonitorConfig // parámetros del faro que heredan los agentes
 
 	// root es el contexto de vida de la app; del que cuelgan los Serve de los
 	// agentes. Se fija con Bind antes de arrancar ninguno.
@@ -29,13 +31,15 @@ type Manager struct {
 	order  []string // ids en orden de alta (Snapshot estable)
 }
 
-// NewManager crea un gestor vacío.
-func NewManager(log *slog.Logger) *Manager {
+// NewManager crea un gestor vacío. monCfg son los parámetros de monitorización
+// (intervalo/timeout/umbral) que usarán los faros de los agentes.
+func NewManager(monCfg config.MonitorConfig, log *slog.Logger) *Manager {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &Manager{
 		log:    log,
+		monCfg: monCfg,
 		agents: make(map[string]*Agent),
 	}
 }
@@ -94,7 +98,7 @@ func (m *Manager) add(spec Spec, core *sipcore.Core) (*Agent, error) {
 	if _, exists := m.agents[spec.ID]; exists {
 		return nil, fmt.Errorf("ya existe un agente con id %q", spec.ID)
 	}
-	a := newAgent(spec, core, m.log)
+	a := newAgent(spec, m.monCfg, core, m.log)
 	m.agents[spec.ID] = a
 	m.order = append(m.order, spec.ID)
 	return a, nil

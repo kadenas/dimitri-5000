@@ -187,8 +187,9 @@ func runMonitor(ctx context.Context, core *sipcore.Core, cfg config.Config, webA
 func runWeb(ctx context.Context, core *sipcore.Core, cfg config.Config, webAddr, ip string, port int, transport, fromDomain string, log *slog.Logger) {
 	addr := joinHostPort(ip, port) // dirección SIP (solo para el log informativo)
 
-	// Gestor de agentes con un agente por defecto que adopta el Core actual.
-	mgr := agent.NewManager(log)
+	// Gestor de agentes con un agente por defecto que adopta el Core actual. Los
+	// agentes heredan los parámetros de monitorización para sus trunks.
+	mgr := agent.NewManager(cfg.Monitor, log)
 	mgr.Bind(ctx)
 	defaultSpec := agent.Spec{
 		ID:         "default",
@@ -209,15 +210,13 @@ func runWeb(ctx context.Context, core *sipcore.Core, cfg config.Config, webAddr,
 		return
 	}
 
-	// Faro de troncales (alimenta el panel de estado). Comparte el Core con el agente.
-	farol := monitor.New(core, cfg.Targets, cfg.Monitor, log)
-	farol.Start(ctx)
-
 	// Captura global de mensajes SIP para el diagrama de escalera (todos los agentes).
 	tracer := trace.NewStore(2000)
 	sipcore.EnableTracing(tracer.Record)
 
-	srv := webui.New(webAddr, farol, mgr, tracer, log)
+	// En modo web la monitorización es POR AGENTE (cada agente tiene sus trunks),
+	// así que no hay faro global: se pasa nil.
+	srv := webui.New(webAddr, nil, mgr, tracer, log)
 	logWebURLs(webAddr, ip, log)
 	log.Info("motor SIP", "sip", addr, "transport", transport)
 	if err := srv.Run(ctx); err != nil {

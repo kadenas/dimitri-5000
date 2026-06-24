@@ -267,6 +267,9 @@ main { padding: 24px 28px 60px; max-width: 1280px; }
 .msg-compose { flex-wrap: wrap; }
 .msg-grid { margin-top: 14px; }
 
+/* Alta de trunks por agente */
+.trunk-add { margin-top: 14px; flex-wrap: wrap; }
+
 /* ---- Diagrama de escalera (ladder) ---- */
 .ladder-bar { align-items: center; }
 .field.check { flex: 0 0 auto; }

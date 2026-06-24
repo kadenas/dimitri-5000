@@ -1,7 +1,25 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-06-24 (sesión 7: + ladder/traza SIP + validación de bind)
+Fecha: 2026-06-24 (sesión 7: + señalización simétrica + trunks por agente v0.10)
+
+## Sesión 7 (cont.) — fix puertos simétricos + trunks por agente (v0.10)
+- FIX RAÍZ DE PUERTOS: usábamos sipgo WithClientPort, que solo fija el puerto del
+  Via y DESACTIVA la reutilización de conexión → origen efímero. Cambiado a
+  WithClientConnectionAddr(bindIP:sipPort): sipgo reutiliza el socket de escucha
+  (req.Laddr -> GetConnection(laddr)). Verificado: OPTIONS e INVITE salen del
+  puerto del agente (5070), no random. Señalización SIMÉTRICA (clave para SBC).
+- MODELO local/remoto + trunks POR AGENTE:
+  - Cada Agent tiene su lista de trunks (config.Target) y su propio monitor.Monitor
+    sobre su core: AddTrunk/RemoveTrunk/TrunksSnapshot. Faro global eliminado en
+    modo web (se pasa nil a webui); el trunk loopback de ejemplo ya no se usa.
+  - Manager guarda MonitorConfig y lo pasa a los agentes (NewManager(monCfg, log)).
+  - webui: GET/POST /api/trunks (lista global agregada + alta) y /api/trunks/remove.
+  - UI v0.10: panel 04 TRUNKS con columna AGENT + REMOVE + alta (FROM AGENT, id,
+    name, host remoto, port, transport). La web lee /api/trunks (antes /api/status).
+- Verificado por API: trunk default->uac-2 UP; baja/alta OK.
+
+## Próximo: RTP/media (Fase 5) o control de llamada (HOLD/REFER). Pendiente decidir.
 
 ## Sesión 7 (cont.) — ladder SIP (v0.9) y validación de bind
 - TRAZA SIP / ladder: sipcore.EnableTracing(fn) activa sip.SIPDebugTracer (hook

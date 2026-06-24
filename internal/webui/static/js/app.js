@@ -16,6 +16,7 @@ let selectedAgent = "default";   // agente que ORIGINA la llamada
 let selectedToAgent = "";        // agente DESTINO ("" = destino manual / externo)
 let selectedMsgAgent = "default"; // agente que ENVÍA el mensaje
 let selectedMsgToAgent = "";      // agente DESTINO del mensaje
+let selectedTrunkAgent = "default"; // agente que monitoriza el trunk a dar de alta
 let agentsCache = [];            // última lista de agentes (para resolver destino)
 let selectedCall = "";           // Call-ID elegido en el ladder
 let showOptions = false;         // mostrar diálogos de OPTIONS (keepalive) en el ladder
@@ -201,6 +202,14 @@ function renderAgentSelector(datos) {
     mo.value = selectedMsgAgent;
   }
   fillDestSelect("msg-to-agent", selectedMsgToAgent);
+
+  // Selector del alta de trunks (mismo origen de agentes).
+  const tr = document.getElementById("tr-agent");
+  if (tr) {
+    if (!ids.includes(selectedTrunkAgent)) selectedTrunkAgent = ids[0] || "default";
+    tr.innerHTML = sel.innerHTML;
+    tr.value = selectedTrunkAgent;
+  }
 }
 
 // fillDestSelect rellena un desplegable de agente DESTINO (con opción manual).
@@ -253,11 +262,12 @@ function renderCalls(datos) {
 function renderTrunks(datos) {
   const tbody = document.getElementById("trunks");
   if (!datos || datos.length === 0) {
-    tbody.innerHTML = '<tr class="empty"><td colspan="8">NO TRUNKS</td></tr>';
+    tbody.innerHTML = '<tr class="empty"><td colspan="10">NO TRUNKS</td></tr>';
     return;
   }
   tbody.innerHTML = datos.map((t) =>
     "<tr>" +
+    "<td>" + esc(t.agent_id) + "</td>" +
     "<td>" + esc(t.name || t.id) + "</td>" +
     "<td>" + esc(t.host) + ":" + esc(t.port) + "</td>" +
     "<td>" + badge(t.status) + "</td>" +
@@ -266,8 +276,21 @@ function renderTrunks(datos) {
     "<td>" + (t.ok || 0) + "</td>" +
     "<td>" + (t.other || 0) + "</td>" +
     "<td>" + (t.timeout || 0) + "</td>" +
+    '<td class="right"><button class="btn-mini danger" data-agent="' + esc(t.agent_id) +
+      '" data-id="' + esc(t.id) + '">REMOVE</button></td>' +
     "</tr>"
   ).join("");
+
+  // Enganchar los botones de baja de trunk.
+  tbody.querySelectorAll(".btn-mini[data-id]").forEach((b) => {
+    b.addEventListener("click", () => {
+      fetch("/api/trunks/remove", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agent_id: b.dataset.agent, id: b.dataset.id }),
+      }).then(refresh);
+    });
+  });
 }
 
 // ---- Traza SIP / diagrama de escalera ----
@@ -374,7 +397,7 @@ async function refresh() {
     const [agents, calls, trunks, messages] = await Promise.all([
       fetch("/api/agents").then((r) => r.json()),
       fetch("/api/calls").then((r) => r.json()),
-      fetch("/api/status").then((r) => r.json()),
+      fetch("/api/trunks").then((r) => r.json()),
       fetch("/api/messages").then((r) => r.json()),
     ]);
     renderAgents(agents);
@@ -551,6 +574,45 @@ document.getElementById("agent-form").addEventListener("submit", async (ev) => {
     document.getElementById("ag-id").value = "";
     document.getElementById("ag-name").value = "";
     document.getElementById("ag-port").value = "";
+    refresh();
+  } catch (e) {
+    hint.textContent = "Error: " + e.message;
+    hint.className = "hint error";
+  }
+});
+
+// Alta de un trunk remoto en el agente elegido.
+document.getElementById("tr-agent").addEventListener("change", (ev) => {
+  selectedTrunkAgent = ev.target.value;
+});
+document.getElementById("trunk-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const hint = document.getElementById("trunk-hint");
+  const payload = {
+    agent_id: document.getElementById("tr-agent").value || "default",
+    id: val("tr-id"),
+    name: val("tr-name"),
+    host: val("tr-host"),
+    port: parseInt(val("tr-port"), 10) || 0,
+    transport: document.getElementById("tr-transport").value,
+  };
+  if (!payload.id || !payload.host || !payload.port) {
+    hint.textContent = "Indica al menos id, host y puerto.";
+    hint.className = "hint error";
+    return;
+  }
+  try {
+    const res = await fetch("/api/trunks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    hint.textContent = "Trunk añadido: " + payload.id;
+    hint.className = "hint";
+    document.getElementById("tr-id").value = "";
+    document.getElementById("tr-host").value = "";
+    document.getElementById("tr-port").value = "";
     refresh();
   } catch (e) {
     hint.textContent = "Error: " + e.message;

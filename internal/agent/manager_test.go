@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+
+	"github.com/kadenas/dimitri-5000/internal/config"
 )
 
 func silentLogger() *slog.Logger {
@@ -18,7 +20,7 @@ func spec(id string, port int) Spec {
 }
 
 func TestManagerAddRemove(t *testing.T) {
-	m := NewManager(silentLogger())
+	m := NewManager(config.MonitorConfig{}, silentLogger())
 
 	if _, err := m.Add(spec("a", 5070)); err != nil {
 		t.Fatalf("Add(a): %v", err)
@@ -57,7 +59,7 @@ func TestManagerAddRemove(t *testing.T) {
 }
 
 func TestManagerValidacion(t *testing.T) {
-	m := NewManager(silentLogger())
+	m := NewManager(config.MonitorConfig{}, silentLogger())
 
 	// Sin id.
 	if _, err := m.Add(Spec{BindIP: "127.0.0.1", SIPPort: 5060}); err == nil {
@@ -74,7 +76,7 @@ func TestManagerValidacion(t *testing.T) {
 }
 
 func TestManagerStartSinBind(t *testing.T) {
-	m := NewManager(silentLogger())
+	m := NewManager(config.MonitorConfig{}, silentLogger())
 	if _, err := m.Add(spec("a", 5070)); err != nil {
 		t.Fatalf("Add: %v", err)
 	}

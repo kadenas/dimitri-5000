@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/kadenas/dimitri-5000/internal/agent"
+	"github.com/kadenas/dimitri-5000/internal/config"
 	"github.com/kadenas/dimitri-5000/internal/control"
 	"github.com/kadenas/dimitri-5000/internal/monitor"
 	"github.com/kadenas/dimitri-5000/internal/sipcore"
@@ -51,8 +52,12 @@ func New(addr string, m *monitor.Monitor, mgr *agent.Manager, tr *trace.Store, l
 func (s *Server) Run(ctx context.Context) error {
 	mux := http.NewServeMux()
 
-	// API: estado de troncales (faro).
+	// API: estado de troncales del faro global (modo monitor legacy).
 	mux.HandleFunc("/api/status", s.handleStatus)
+
+	// API de trunks por agente (modo web): lista global + alta/baja.
+	mux.HandleFunc("/api/trunks", s.handleTrunks)             // GET lista | POST alta
+	mux.HandleFunc("/api/trunks/remove", s.handleTrunkRemove) // POST {agent_id, id}
 
 	// API de agentes (instancias SIP).
 	mux.HandleFunc("/api/agents", s.handleAgents)             // GET lista | POST alta
@@ -129,6 +134,92 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, s.monitor.Snapshot())
+}
+
+// --- Trunks por agente -------------------------------------------------------
+
+// trunkView es el estado de un trunk etiquetado con el agente que lo monitoriza.
+type trunkView struct {
+	AgentID string `json:"agent_id"`
+	monitor.TargetState
+}
+
+// trunkReq es el cuerpo JSON para dar de alta un trunk.
+type trunkReq struct {
+	AgentID   string `json:"agent_id"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Host      string `json:"host"`
+	Port      int    `json:"port"`
+	Transport string `json:"transport"`
+}
+
+// handleTrunks: GET lista (agregada de todos los agentes) | POST alta en un agente.
+func (s *Server) handleTrunks(w http.ResponseWriter, r *http.Request) {
+	if s.manager == nil {
+		s.writeJSON(w, []any{})
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		out := make([]trunkView, 0)
+		for _, info := range s.manager.Snapshot() {
+			a := s.manager.Get(info.ID)
+			if a == nil {
+				continue
+			}
+			for _, ts := range a.TrunksSnapshot() {
+				out = append(out, trunkView{AgentID: info.ID, TargetState: ts})
+			}
+		}
+		s.writeJSON(w, out)
+	case http.MethodPost:
+		var req trunkReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "JSON inválido", http.StatusBadRequest)
+			return
+		}
+		a := s.manager.Get(req.AgentID)
+		if a == nil {
+			http.Error(w, "agente no encontrado", http.StatusBadRequest)
+			return
+		}
+		t := config.Target{ID: req.ID, Name: req.Name, Host: req.Host, Port: req.Port, Transport: req.Transport}
+		if err := a.AddTrunk(t); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		s.writeJSON(w, map[string]string{"id": req.ID})
+	default:
+		http.Error(w, "usa GET o POST", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleTrunkRemove quita un trunk de su agente.
+func (s *Server) handleTrunkRemove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "usa POST", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.manager == nil {
+		http.Error(w, "gestor de agentes no disponible", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		AgentID string `json:"agent_id"`
+		ID      string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID == "" || req.AgentID == "" {
+		http.Error(w, "JSON inválido: se requieren 'agent_id' e 'id'", http.StatusBadRequest)
+		return
+	}
+	a := s.manager.Get(req.AgentID)
+	if a == nil || !a.RemoveTrunk(req.ID) {
+		http.Error(w, "trunk no encontrado", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- Agentes -----------------------------------------------------------------

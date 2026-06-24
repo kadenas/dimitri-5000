@@ -21,7 +21,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kadenas/dimitri-5000/internal/config"
 	"github.com/kadenas/dimitri-5000/internal/control"
+	"github.com/kadenas/dimitri-5000/internal/monitor"
 	"github.com/kadenas/dimitri-5000/internal/sipcore"
 )
 
@@ -57,10 +59,13 @@ func (s Spec) policy() sipcore.UASPolicy {
 	}
 }
 
-// Agent es una instancia SIP gestionada por el Manager.
+// Agent es una instancia SIP gestionada por el Manager. Cada agente, además de
+// señalizar, monitoriza sus TRUNKS (endpoints remotos) con OPTIONS originados
+// desde SU PROPIO core: así el OPTIONS sale del puerto configurado del agente.
 type Agent struct {
-	spec Spec
-	log  *slog.Logger
+	spec   Spec
+	monCfg config.MonitorConfig
+	log    *slog.Logger
 
 	mu       sync.Mutex
 	state    string
@@ -68,16 +73,20 @@ type Agent struct {
 	ownsCore bool                // true si el agente creó el Core (debe cerrarlo al parar)
 	ctrl     *control.Controller // control de llamadas; existe mientras está running
 	cancel   context.CancelFunc  // detiene el Serve del agente
+
+	trunks []config.Target  // trunks remotos asignados (persisten entre stop/start)
+	mon    *monitor.Monitor // faro de ESTE agente; existe mientras está running
 }
 
 // newAgent crea el objeto agente en estado "stopped" (sin tocar la red). Si core
 // no es nil, el agente lo ADOPTA (no lo cerrará al parar: lo gestiona quien lo creó).
-func newAgent(spec Spec, core *sipcore.Core, log *slog.Logger) *Agent {
+func newAgent(spec Spec, monCfg config.MonitorConfig, core *sipcore.Core, log *slog.Logger) *Agent {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &Agent{
 		spec:     spec,
+		monCfg:   monCfg,
 		log:      log,
 		state:    StateStopped,
 		core:     core,
@@ -132,6 +141,10 @@ func (a *Agent) Start(parent context.Context) error {
 		}
 	}()
 
+	// Faro propio del agente sobre sus trunks (OPTIONS desde este core).
+	a.mon = monitor.New(a.core, a.trunks, a.monCfg, a.log)
+	a.mon.Start(ctx)
+
 	a.state = StateRunning
 	a.log.Info("agente arrancado", "id", a.spec.ID, "addr", addr, "transport", a.spec.Transport)
 	return nil
@@ -154,8 +167,64 @@ func (a *Agent) Stop() {
 		a.core = nil
 	}
 	a.ctrl = nil
+	a.mon = nil // sus goroutines de OPTIONS paran con la cancelación del contexto
 	a.state = StateStopped
 	a.log.Info("agente parado", "id", a.spec.ID)
+}
+
+// AddTrunk asigna un trunk remoto al agente y, si está corriendo, empieza a
+// monitorizarlo con OPTIONS. Valida y rechaza ids duplicados.
+func (a *Agent) AddTrunk(t config.Target) error {
+	if err := t.Validate(); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, ex := range a.trunks {
+		if ex.ID == t.ID {
+			return fmt.Errorf("el agente %q ya tiene un trunk con id %q", a.spec.ID, t.ID)
+		}
+	}
+	a.trunks = append(a.trunks, t)
+	if a.mon != nil {
+		return a.mon.AddTarget(t)
+	}
+	return nil
+}
+
+// RemoveTrunk quita un trunk del agente. Devuelve false si no existía.
+func (a *Agent) RemoveTrunk(id string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	encontrado := false
+	for i, t := range a.trunks {
+		if t.ID == id {
+			a.trunks = append(a.trunks[:i], a.trunks[i+1:]...)
+			encontrado = true
+			break
+		}
+	}
+	if encontrado && a.mon != nil {
+		a.mon.RemoveTarget(id)
+	}
+	return encontrado
+}
+
+// TrunksSnapshot devuelve el estado de los trunks del agente. Si está corriendo,
+// con el estado vivo del faro; si está parado, como "unknown".
+func (a *Agent) TrunksSnapshot() []monitor.TargetState {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.mon != nil {
+		return a.mon.Snapshot()
+	}
+	out := make([]monitor.TargetState, 0, len(a.trunks))
+	for _, t := range a.trunks {
+		out = append(out, monitor.TargetState{
+			ID: t.ID, Name: t.Name, Host: t.Host, Port: t.Port, Status: monitor.StatusUnknown,
+		})
+	}
+	return out
 }
 
 // Control devuelve el controlador de llamadas del agente (nil si está parado).
