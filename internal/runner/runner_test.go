@@ -48,7 +48,7 @@ func TestRunnerUACLoopback(t *testing.T) {
 	const uacPort = 35081
 
 	// UAS de auto-answer.
-	uas, err := sipcore.New(ip, uasPort, "uas", nil)
+	uas, err := sipcore.New(ip, uasPort, "uas", "", nil)
 	if err != nil {
 		t.Fatalf("crear UAS: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestRunnerUACLoopback(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// UAC + runner.
-	uac, err := sipcore.New(ip, uacPort, "uac", nil)
+	uac, err := sipcore.New(ip, uacPort, "uac", "", nil)
 	if err != nil {
 		t.Fatalf("crear UAC: %v", err)
 	}

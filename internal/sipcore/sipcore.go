@@ -59,13 +59,29 @@ type Result struct {
 // New crea el núcleo SIP. bindIP es la IP local que aparecerá en las cabeceras
 // Via/Contact y desde la que saldrá el tráfico; sipPort es el puerto SIP local
 // (origen del UAC y escucha del UAS); userAgent es el nombre que se anuncia en
-// la cabecera User-Agent. log puede ser nil (se usa un logger por defecto).
-func New(bindIP string, sipPort int, userAgent string, log *slog.Logger) (*Core, error) {
+// la cabecera User-Agent. fromDomain es el dominio (host) que se pone en el
+// 'From' de las peticiones salientes; si va vacío se usa bindIP. log puede ser
+// nil (se usa un logger por defecto).
+//
+// Por qué fromDomain importa: sipgo, por defecto, construye el 'From' con el
+// hostname del UserAgent, que es "localhost". Una PBX/SBC real puede RECHAZAR un
+// 'From' con dominio "localhost" o no saber enrutar las respuestas. Aquí fijamos
+// ese dominio (con WithUserAgentHostname) a la IP de señalización o a lo que el
+// usuario configure (p. ej. "pbx.local").
+func New(bindIP string, sipPort int, userAgent, fromDomain string, log *slog.Logger) (*Core, error) {
 	if log == nil {
 		log = slog.Default()
 	}
 
-	ua, err := sipgo.NewUA(sipgo.WithUserAgent(userAgent))
+	// Dominio del From: si no se indica uno, usamos la IP de bind (nunca localhost).
+	if fromDomain == "" {
+		fromDomain = bindIP
+	}
+
+	ua, err := sipgo.NewUA(
+		sipgo.WithUserAgent(userAgent),
+		sipgo.WithUserAgentHostname(fromDomain), // host del From (RFC: dominio válido)
+	)
 	if err != nil {
 		return nil, fmt.Errorf("creando user agent: %w", err)
 	}

@@ -14,7 +14,7 @@ func TestOptionsTrunk(t *testing.T) {
 	const trunkPort = 35090
 	const monPort = 35091
 
-	trunk, err := New(ip, trunkPort, "trunk", nil)
+	trunk, err := New(ip, trunkPort, "trunk", "", nil)
 	if err != nil {
 		t.Fatalf("crear trunk: %v", err)
 	}
@@ -25,7 +25,7 @@ func TestOptionsTrunk(t *testing.T) {
 	go func() { _ = trunk.Serve(ctx, "udp", ip+":"+strconv.Itoa(trunkPort)) }()
 	time.Sleep(300 * time.Millisecond)
 
-	mon, err := New(ip, monPort, "mon", nil)
+	mon, err := New(ip, monPort, "mon", "", nil)
 	if err != nil {
 		t.Fatalf("crear monitor: %v", err)
 	}

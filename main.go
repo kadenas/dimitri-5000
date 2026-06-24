@@ -42,6 +42,7 @@ func main() {
 	bindIP := flag.String("bind-ip", "", "IP local para la señalización SIP (vacío = autodetectar la de la tarjeta de red)")
 	sipPort := flag.Int("sip-port", 0, "Puerto SIP local (0 = usar config; por defecto 5060)")
 	transport := flag.String("transport", "", "Transporte SIP: udp | tcp (vacío = usar config; por defecto udp)")
+	fromDomain := flag.String("from-domain", "", "Dominio (host) de la cabecera From saliente (vacío = usar la IP de bind)")
 
 	// Específicos del modo uac (lanzar llamada).
 	to := flag.String("to", "", "Destino de la llamada en modo uac, p. ej.: sip:192.168.1.10:5060")
@@ -80,14 +81,24 @@ func main() {
 		resolvedTransport = "udp" // por defecto y para cualquier valor no reconocido
 	}
 
+	// Dominio del From: flag > config > vacío (el núcleo usará la IP de bind).
+	resolvedFromDomain := cfg.FromDomain
+	if *fromDomain != "" {
+		resolvedFromDomain = *fromDomain
+	}
+	if resolvedFromDomain == "" {
+		resolvedFromDomain = resolvedIP // explícito en el log; el núcleo haría lo mismo
+	}
+
 	log.Info("señalización SIP",
 		"bind_ip", resolvedIP,
 		"sip_port", resolvedPort,
 		"transport", resolvedTransport,
+		"from_domain", resolvedFromDomain,
 	)
 
 	// --- 4. Núcleo SIP (única capa que habla con sipgo) --------------------
-	core, err := sipcore.New(resolvedIP, resolvedPort, "dimitri-5000", log)
+	core, err := sipcore.New(resolvedIP, resolvedPort, "dimitri-5000", resolvedFromDomain, log)
 	if err != nil {
 		log.Error("no se pudo inicializar el núcleo SIP", "error", err)
 		os.Exit(1)

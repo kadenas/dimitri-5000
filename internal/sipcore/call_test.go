@@ -17,7 +17,7 @@ func TestLlamadaLoopback(t *testing.T) {
 	)
 
 	// --- UAS: el que recibe la llamada ---
-	uas, err := New(ip, uasPort, "dimitri-uas", nil)
+	uas, err := New(ip, uasPort, "dimitri-uas", "", nil)
 	if err != nil {
 		t.Fatalf("creando UAS: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestLlamadaLoopback(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// --- UAC: el que llama ---
-	uac, err := New(ip, uacPort, "dimitri-uac", nil)
+	uac, err := New(ip, uacPort, "dimitri-uac", "", nil)
 	if err != nil {
 		t.Fatalf("creando UAC: %v", err)
 	}
