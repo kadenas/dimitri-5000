@@ -1,7 +1,32 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-06-24 (sesión 7: + selector agente destino + mensajería SIP MESSAGE)
+Fecha: 2026-06-24 (sesión 7: + ladder/traza SIP + validación de bind)
+
+## Sesión 7 (cont.) — ladder SIP (v0.9) y validación de bind
+- TRAZA SIP / ladder: sipcore.EnableTracing(fn) activa sip.SIPDebugTracer (hook
+  global) y reenvía cada mensaje (dir/transport/laddr/raddr/bytes) a un callback
+  neutro. internal/trace.Store parsea (primera línea, Call-ID, CSeq), buffer
+  acotado (2000), agrupa por Call-ID. webui: /api/trace, /api/trace/calls,
+  /api/trace/clear. UI bloque 06 LADDER (selector de llamada, filtro OPTIONS,
+  CLEAR; diagrama de 2 carriles con flechas, dedup del mismo msg visto en ambos
+  extremos cuando los dos agentes son locales). Tests del parseo en verde.
+- VALIDACIÓN DE BIND (agent.Start): checkBindAvailable abre el socket un instante
+  antes de Serve → detecta "puerto en uso" e "IP no local" y devuelve error claro
+  (la web lo muestra; el agente ya NO queda 'running' en falso). Verificado.
+- Diagnóstico puertos: el OPTIONS desde 0.0.0.0:efímero pasa SOLO con destino
+  loopback (trunk 127.0.0.1) bindeando IP de LAN (interfaces distintas). Contra un
+  remoto real alcanzable, sale desde el puerto configurado. Pendiente: modelo
+  local/remoto (trunks por agente) para originar OPTIONS desde el socket del agente.
+
+## Decidido — PRÓXIMA feature: agente local + trunks remotos
+- Separar "agente local" (escucha local, IP local validada + puerto libre) de
+  "trunk remoto" (endpoint que NO escuchamos; OPTIONS/llamadas originados desde un
+  agente local). Trunks POR agente, OPTIONS desde el core del agente (sin puerto
+  random). Reemplaza el faro global (que usa un único core y trae trunk loopback).
+- Después: RTP/media (Fase 5, G.711 nativo; G.729 patentes ~expiradas 2017, decode
+  necesitaría bcg729/cgo GPL, opcional; para test basta medir el stream),
+  control de llamada (HOLD re-INVITE / REFER vía DialogClientSession.Do).
 
 ## Sesión 7 (cont.) — selector TO AGENT (v0.7) y mensajería MESSAGE (v0.8)
 - PLACE CALL: selector FROM AGENT (origen) + TO AGENT (destino): al elegir un

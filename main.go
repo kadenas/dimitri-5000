@@ -27,6 +27,7 @@ import (
 	"github.com/kadenas/dimitri-5000/internal/runner"
 	"github.com/kadenas/dimitri-5000/internal/scenario"
 	"github.com/kadenas/dimitri-5000/internal/sipcore"
+	"github.com/kadenas/dimitri-5000/internal/trace"
 	"github.com/kadenas/dimitri-5000/internal/webui"
 )
 
@@ -171,7 +172,7 @@ func runMonitor(ctx context.Context, core *sipcore.Core, cfg config.Config, webA
 	farol.Start(ctx)
 	log.Info("faro iniciado", "troncales", len(cfg.Targets), "sip", addr)
 
-	srv := webui.New(webAddr, farol, nil, log) // modo monitor: sin agentes
+	srv := webui.New(webAddr, farol, nil, nil, log) // modo monitor: sin agentes ni traza
 	log.Info("interfaz web disponible", "url", "http://"+webAddr)
 	if err := srv.Run(ctx); err != nil {
 		log.Error("la interfaz web terminó con error", "error", err)
@@ -212,7 +213,11 @@ func runWeb(ctx context.Context, core *sipcore.Core, cfg config.Config, webAddr,
 	farol := monitor.New(core, cfg.Targets, cfg.Monitor, log)
 	farol.Start(ctx)
 
-	srv := webui.New(webAddr, farol, mgr, log)
+	// Captura global de mensajes SIP para el diagrama de escalera (todos los agentes).
+	tracer := trace.NewStore(2000)
+	sipcore.EnableTracing(tracer.Record)
+
+	srv := webui.New(webAddr, farol, mgr, tracer, log)
 	logWebURLs(webAddr, ip, log)
 	log.Info("motor SIP", "sip", addr, "transport", transport)
 	if err := srv.Run(ctx); err != nil {

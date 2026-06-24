@@ -12,7 +12,7 @@
     <div class="wordmark">
       <span class="dim">DIMITRI</span><span class="slash">//</span><span class="num">5000</span>
     </div>
-    <div class="sub">SIP&nbsp;TEST&nbsp;SYSTEM · v0.8</div>
+    <div class="sub">SIP&nbsp;TEST&nbsp;SYSTEM · v0.9</div>
     <div class="sysline" id="sysline">
       <span id="clock">--:--:--</span>
     </div>
@@ -214,6 +214,31 @@
           <tr class="empty"><td colspan="6">NO MESSAGES</td></tr>
         </tbody>
       </table>
+    </section>
+
+    <!-- Bloque: traza SIP en diagrama de escalera -->
+    <section class="block">
+      <h2 class="block-title"><span class="idx">06</span> LADDER&nbsp;/&nbsp;SIP&nbsp;TRACE</h2>
+      <div class="panel control ladder-bar">
+        <label class="field grow">
+          <span>CALL&nbsp;/&nbsp;DIALOG</span>
+          <select id="trace-call"></select>
+        </label>
+        <label class="field check">
+          <span>OPTIONS</span>
+          <input type="checkbox" id="trace-options" />
+        </label>
+        <button type="button" id="trace-clear" class="btn-mini danger">CLEAR TRACE</button>
+      </div>
+      <div class="ladder">
+        <div class="lad-lanes">
+          <span class="lane" id="lane-left">—</span>
+          <span class="lane right" id="lane-right">—</span>
+        </div>
+        <div id="ladder-rows">
+          <div class="lad-empty">SELECCIONA UNA LLAMADA</div>
+        </div>
+      </div>
     </section>
   </main>
 

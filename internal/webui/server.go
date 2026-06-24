@@ -22,6 +22,7 @@ import (
 	"github.com/kadenas/dimitri-5000/internal/control"
 	"github.com/kadenas/dimitri-5000/internal/monitor"
 	"github.com/kadenas/dimitri-5000/internal/sipcore"
+	"github.com/kadenas/dimitri-5000/internal/trace"
 )
 
 // go:embed mete los ficheros de la carpeta static/ DENTRO del binario, para que
@@ -36,13 +37,14 @@ type Server struct {
 	addr    string
 	monitor *monitor.Monitor // puede ser nil (modo sin faro)
 	manager *agent.Manager   // puede ser nil (modo monitor sin agentes)
+	trace   *trace.Store     // puede ser nil (sin captura de traza)
 	log     *slog.Logger
 }
 
-// New crea el servidor web (no lo arranca todavía). monitor y manager son
-// opcionales: el modo monitor pasa manager=nil; el modo web pasa ambos.
-func New(addr string, m *monitor.Monitor, mgr *agent.Manager, log *slog.Logger) *Server {
-	return &Server{addr: addr, monitor: m, manager: mgr, log: log}
+// New crea el servidor web (no lo arranca todavía). monitor, manager y trace son
+// opcionales: el modo monitor pasa manager=nil; el modo web pasa todos.
+func New(addr string, m *monitor.Monitor, mgr *agent.Manager, tr *trace.Store, log *slog.Logger) *Server {
+	return &Server{addr: addr, monitor: m, manager: mgr, trace: tr, log: log}
 }
 
 // Run arranca el servidor HTTP y lo detiene limpiamente cuando ctx se cancela.
@@ -66,6 +68,11 @@ func (s *Server) Run(ctx context.Context) error {
 	// API de mensajería SIP (MESSAGE).
 	mux.HandleFunc("/api/messages", s.handleMessages) // GET: enviados y recibidos
 	mux.HandleFunc("/api/message", s.handleSendMessage) // POST: enviar un MESSAGE
+
+	// API de la traza SIP (diagrama de escalera).
+	mux.HandleFunc("/api/trace/calls", s.handleTraceCalls) // GET: llamadas en la traza
+	mux.HandleFunc("/api/trace/clear", s.handleTraceClear) // POST: vaciar la traza
+	mux.HandleFunc("/api/trace", s.handleTrace)            // GET ?call_id=: eventos
 
 	// Ficheros estáticos (index.html, css, js) servidos desde el embed.
 	// fs.Sub quita el prefijo "static" para que "/" sirva static/index.html.
@@ -378,6 +385,42 @@ func buildCallSpec(req placeCallReq) (control.CallSpec, error) {
 	}
 
 	return control.CallSpec{Invite: inv, Hold: req.Hold, Display: display}, nil
+}
+
+// --- Traza SIP (ladder) ------------------------------------------------------
+
+// handleTraceCalls devuelve el resumen de llamadas presentes en la traza.
+func (s *Server) handleTraceCalls(w http.ResponseWriter, r *http.Request) {
+	if s.trace == nil {
+		s.writeJSON(w, []any{})
+		return
+	}
+	s.writeJSON(w, s.trace.Calls())
+}
+
+// handleTrace devuelve los eventos: de una llamada (?call_id=) o todos.
+func (s *Server) handleTrace(w http.ResponseWriter, r *http.Request) {
+	if s.trace == nil {
+		s.writeJSON(w, []any{})
+		return
+	}
+	if id := r.URL.Query().Get("call_id"); id != "" {
+		s.writeJSON(w, s.trace.ByCallID(id))
+		return
+	}
+	s.writeJSON(w, s.trace.Snapshot())
+}
+
+// handleTraceClear vacía la traza.
+func (s *Server) handleTraceClear(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "usa POST", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.trace != nil {
+		s.trace.Clear()
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- Mensajería SIP (MESSAGE) ------------------------------------------------

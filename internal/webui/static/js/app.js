@@ -17,6 +17,8 @@ let selectedToAgent = "";        // agente DESTINO ("" = destino manual / extern
 let selectedMsgAgent = "default"; // agente que ENVÍA el mensaje
 let selectedMsgToAgent = "";      // agente DESTINO del mensaje
 let agentsCache = [];            // última lista de agentes (para resolver destino)
+let selectedCall = "";           // Call-ID elegido en el ladder
+let showOptions = false;         // mostrar diálogos de OPTIONS (keepalive) en el ladder
 
 // Escapa texto para no inyectar HTML al construir filas.
 function esc(s) {
@@ -268,6 +270,102 @@ function renderTrunks(datos) {
   ).join("");
 }
 
+// ---- Traza SIP / diagrama de escalera ----
+
+// Rellena el selector de llamadas de la traza (filtra OPTIONS salvo que se marque).
+function renderTraceCalls(calls) {
+  const sel = document.getElementById("trace-call");
+  let lista = calls || [];
+  if (!showOptions) {
+    lista = lista.filter((c) => !c.first_line.startsWith("OPTIONS"));
+  }
+  const ids = lista.map((c) => c.call_id);
+  if (selectedCall && !ids.includes(selectedCall)) selectedCall = "";
+  if (!selectedCall && ids.length) selectedCall = ids[0];
+
+  sel.innerHTML = lista.map((c) => {
+    // Etiqueta legible: primer método + nº de mensajes.
+    const metodo = c.first_line.split(" ")[0];
+    return '<option value="' + esc(c.call_id) + '">' +
+      esc(metodo) + " · " + c.count + " msg · " + esc(c.call_id.slice(0, 8)) +
+      "</option>";
+  }).join("") || '<option value="">— sin llamadas —</option>';
+  sel.value = selectedCall;
+}
+
+// Construye las flechas del ladder a partir de los eventos, deduplicando el mismo
+// mensaje visto en los dos extremos (cuando ambos agentes son locales).
+function buildArrows(events) {
+  const arrows = [];
+  const seen = new Set();
+  for (const e of events) {
+    const sender = e.dir === "out" ? e.laddr : e.raddr;
+    const receiver = e.dir === "out" ? e.raddr : e.laddr;
+    const key = sender + "|" + receiver + "|" + e.cseq + "|" + e.first_line;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    let label;
+    if (e.kind === "response") {
+      const reason = e.first_line.split(" ").slice(2).join(" ");
+      label = e.code + " " + reason + " (" + e.method + ")";
+    } else {
+      label = e.method;
+    }
+    arrows.push({ time: e.time, sender, receiver, label, kind: e.kind });
+  }
+  return arrows;
+}
+
+function renderLadder(events) {
+  const cont = document.getElementById("ladder-rows");
+  if (!events || events.length === 0) {
+    cont.innerHTML = '<div class="lad-empty">SIN MENSAJES</div>';
+    document.getElementById("lane-left").textContent = "—";
+    document.getElementById("lane-right").textContent = "—";
+    return;
+  }
+  const arrows = buildArrows(events);
+
+  // Carriles: los dos primeros extremos que aparecen.
+  const lanes = [];
+  arrows.forEach((a) => {
+    [a.sender, a.receiver].forEach((p) => { if (!lanes.includes(p)) lanes.push(p); });
+  });
+  const left = lanes[0] || "—";
+  const right = lanes[1] || "—";
+  document.getElementById("lane-left").textContent = left;
+  document.getElementById("lane-right").textContent = right;
+
+  cont.innerHTML = arrows.map((a) => {
+    const haciaDerecha = a.sender === left;
+    const flecha = haciaDerecha
+      ? '<span class="lad-line">────────▶</span>'
+      : '<span class="lad-line rev">◀────────</span>';
+    const clase = a.kind === "response" ? "resp" : "req";
+    const hora = (a.time.split("T")[1] || a.time);
+    return '<div class="lad-row">' +
+      '<span class="lad-time">' + esc(hora) + "</span>" +
+      '<div class="lad-flow ' + (haciaDerecha ? "r" : "l") + '">' +
+        '<span class="lad-label ' + clase + '">' + esc(a.label) + "</span>" +
+        flecha +
+      "</div>" +
+      "</div>";
+  }).join("");
+}
+
+// Trae las llamadas de la traza y, si hay una elegida, sus eventos para el ladder.
+async function refreshTrace() {
+  const calls = await fetch("/api/trace/calls").then((r) => r.json());
+  renderTraceCalls(calls);
+  if (selectedCall) {
+    const ev = await fetch("/api/trace?call_id=" + encodeURIComponent(selectedCall))
+      .then((r) => r.json());
+    renderLadder(ev);
+  } else {
+    renderLadder([]);
+  }
+}
+
 // ---- Refresco periódico ----
 
 async function refresh() {
@@ -284,6 +382,7 @@ async function refresh() {
     renderCalls(calls);
     renderTrunks(trunks);
     renderMessages(messages);
+    await refreshTrace();
     conn.textContent = "ONLINE";
     conn.className = "conn ok";
   } catch (e) {
@@ -457,6 +556,22 @@ document.getElementById("agent-form").addEventListener("submit", async (ev) => {
     hint.textContent = "Error: " + e.message;
     hint.className = "hint error";
   }
+});
+
+// ---- Controles del ladder ----
+document.getElementById("trace-call").addEventListener("change", (ev) => {
+  selectedCall = ev.target.value;
+  refreshTrace();
+});
+document.getElementById("trace-options").addEventListener("change", (ev) => {
+  showOptions = ev.target.checked;
+  selectedCall = ""; // recalcula la selección con el nuevo filtro
+  refreshTrace();
+});
+document.getElementById("trace-clear").addEventListener("click", async () => {
+  await fetch("/api/trace/clear", { method: "POST" });
+  selectedCall = "";
+  refreshTrace();
 });
 
 tickClock();

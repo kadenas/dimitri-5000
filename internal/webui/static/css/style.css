@@ -267,6 +267,77 @@ main { padding: 24px 28px 60px; max-width: 1280px; }
 .msg-compose { flex-wrap: wrap; }
 .msg-grid { margin-top: 14px; }
 
+/* ---- Diagrama de escalera (ladder) ---- */
+.ladder-bar { align-items: center; }
+.field.check { flex: 0 0 auto; }
+.field.check input { width: 20px; height: 20px; accent-color: var(--acid); }
+
+.ladder {
+  margin-top: 12px;
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+}
+/* Cabecera con los dos carriles (extremos del diálogo) */
+.lad-lanes {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line-strong);
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: var(--acid);
+}
+.lad-lanes .lane.right { text-align: right; }
+
+/* Cada fila: hora + zona de flujo con dos líneas guía verticales */
+.lad-row {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+}
+.lad-row:last-child { border-bottom: 0; }
+.lad-time {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  padding: 8px 12px;
+  border-right: 1px solid var(--line);
+}
+/* Líneas guía de los dos carriles (al ~12% y ~88%) */
+.lad-flow {
+  position: relative;
+  padding: 10px 12%;
+  text-align: center;
+  background:
+    linear-gradient(var(--line-strong), var(--line-strong)) 12% 0 / 1px 100% no-repeat,
+    linear-gradient(var(--line-strong), var(--line-strong)) 88% 0 / 1px 100% no-repeat;
+}
+.lad-label {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 0 8px 2px;
+}
+.lad-label.req { color: var(--ink); }
+.lad-label.resp { color: var(--degraded); }
+.lad-line {
+  display: block;
+  font-family: var(--mono);
+  color: var(--acid);
+  letter-spacing: -1px;
+}
+.lad-flow.l { text-align: center; }
+.lad-empty {
+  padding: 26px;
+  text-align: center;
+  color: var(--muted);
+  font-family: var(--mono);
+  letter-spacing: 0.2em;
+  font-size: 12px;
+}
+
 /* Desplegables con el mismo lenguaje visual que los inputs */
 .field select {
   background: transparent;
