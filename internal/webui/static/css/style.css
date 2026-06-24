@@ -235,6 +235,34 @@ main { padding: 24px 28px 60px; max-width: 1280px; }
 /* El formulario de alta de agente, una segunda fila de campos bajo la tabla */
 .agent-add { margin-top: 14px; flex-wrap: wrap; }
 
+/* Bloque de valores SIP avanzados (PLACE CALL) */
+.adv-toggle {
+  margin-top: 12px;
+  background: transparent;
+  border: 0;
+  color: var(--acid);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: pointer;
+  padding: 4px 0;
+}
+.adv-toggle:hover { color: #eaff5a; }
+.adv { margin-top: 8px; flex-wrap: wrap; }
+.hidden { display: none; }
+.field textarea {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 6px 8px;
+  outline: none;
+  resize: vertical;
+}
+.field textarea:focus { border-color: var(--acid); }
+
 /* Desplegables con el mismo lenguaje visual que los inputs */
 .field select {
   background: transparent;

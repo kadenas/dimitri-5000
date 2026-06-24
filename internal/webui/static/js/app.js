@@ -40,14 +40,32 @@ function badge(state) {
 
 // ---- Lanzar / colgar llamadas ----
 
-async function placeCall(agentId, to, hold) {
+async function placeCall(payload) {
   const res = await fetch("/api/call", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ agent_id: agentId, to, hold }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
+}
+
+// Convierte el textarea de cabeceras ("Nombre: Valor" por línea) en un objeto.
+function parseHeaders(texto) {
+  const out = {};
+  (texto || "").split("\n").forEach((linea) => {
+    const l = linea.trim();
+    if (!l) return;
+    const i = l.indexOf(":");
+    if (i > 0) out[l.slice(0, i).trim()] = l.slice(i + 1).trim();
+  });
+  return out;
+}
+
+// Lee un input por id y devuelve su valor recortado (o "").
+function val(id) {
+  const el = document.getElementById(id);
+  return el ? el.value.trim() : "";
 }
 
 async function hangup(id) {
@@ -215,20 +233,47 @@ document.getElementById("call-agent").addEventListener("change", (ev) => {
   selectedAgent = ev.target.value;
 });
 
+// Mostrar/ocultar el bloque de valores SIP avanzados.
+document.getElementById("adv-toggle").addEventListener("click", () => {
+  const adv = document.getElementById("adv");
+  const btn = document.getElementById("adv-toggle");
+  const oculto = adv.classList.toggle("hidden");
+  btn.textContent = (oculto ? "▸" : "▾") + " VALORES SIP / SBC";
+});
+
 document.getElementById("call-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const hint = document.getElementById("form-hint");
   const agentId = document.getElementById("call-agent").value || "default";
-  const to = document.getElementById("to").value.trim();
+  const to = val("to");
+  const destHost = val("dest-host");
   const hold = parseInt(document.getElementById("hold").value, 10) || 0;
-  if (!to) {
-    hint.textContent = "Indica un destino (TARGET URI).";
+
+  // Hace falta un destino: o la URI simple o el DEST HOST (SBC).
+  if (!to && !destHost) {
+    hint.textContent = "Indica un destino: TARGET URI o DEST HOST.";
     hint.className = "hint error";
     return;
   }
+
+  const payload = {
+    agent_id: agentId,
+    hold,
+    to,
+    dest_host: destHost,
+    dest_port: parseInt(val("dest-port"), 10) || 0,
+    from_user: val("from-user"),
+    from_domain: val("from-domain"),
+    from_display: val("from-display"),
+    to_user: val("to-user"),
+    to_domain: val("to-domain"),
+    pai_user: val("pai-user"),
+    headers: parseHeaders(val("headers")),
+  };
+
   try {
-    await placeCall(agentId, to, hold);
-    hint.textContent = "Llamada lanzada (" + agentId + ") → " + to;
+    const r = await placeCall(payload);
+    hint.textContent = "Llamada lanzada (" + agentId + ") · id " + r.id;
     hint.className = "hint";
     refresh();
   } catch (e) {

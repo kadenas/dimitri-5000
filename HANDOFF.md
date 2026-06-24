@@ -1,7 +1,24 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-06-24 (sesión 7: fix From RFC + modelo multi-agente G1+G2)
+Fecha: 2026-06-24 (sesión 7: fix From + multi-agente G1+G2 + llamada enriquecida)
+
+## Sesión 7 (cont.) — Paso A: llamada "humana" con valores SIP (travesía SBC)
+- sipcore.RichInvite + Core.DialInvite: construye el INVITE con valores concretos.
+  - Request-URI se envía a DestHost:DestPort (el SBC o el peer); el To puede llevar
+    OTRO dominio → patrón de travesía por SBC (el SBC enruta por número).
+  - From tipado con su tag (sipgo lo respeta y no lo regenera). PAI y cabeceras
+    arbitrarias. SplitURI parsea el modo simple "sip:host:port".
+- control.PlaceCall ahora recibe CallSpec (RichInvite + hold + display).
+- webui /api/call admite modo simple ('to') o enriquecido (dest_host, from_user/
+  domain/display, to_user/domain, pai_user, headers{}). buildCallSpec une ambos.
+- onInvite loguea from/to/r-uri/pai (verificable que las identidades llegan).
+- UI (v0.6): PLACE CALL con bloque plegable "VALORES SIP / SBC" (DEST HOST/PORT,
+  FROM user/domain/display, TO user/domain, PAI, HEADERS textarea Nombre: Valor).
+- Verificado por API: llamada default->:5072 con from=1000@pbx.local,
+  to=2000@destino.local, r-uri=2000@127.0.0.1:5072, pai=<sip:1000@pbx.local>.
+  Falta REPASO VISUAL en navegador del bloque avanzado antes de commit.
+- Pendiente Paso B: escenarios SIPp en la web (motor runner ya existe).
 
 ## Sesión 7 (cont.) — G2: API y panel de AGENTES en la web
 - webui ahora habla con el Manager (no con un control único):
@@ -147,16 +164,24 @@ dimitri-5000 --mode uac --to sip:<IP_DEL_SBC>:5060 # apunta al SBC, que reenvía
 - monitor_test.go nuevo (TestAddRemoveTarget, TestSyncReconcilia). Toda la batería
   en verde; go vet limpio. (-race no disponible: requiere cgo/compilador C.)
 
-## Próximos pasos (bloque "app configurable", en curso)
-1. Conectar config.Store ↔ faro: que AddTarget/RemoveTarget del Store empujen al
-   monitor (Sync o llamadas directas). Wiring en main (runWeb/runMonitor).
-2. API web: GET/POST /api/trunks, DELETE /api/trunks/{id}, GET/PUT /api/settings.
-3. Panel web SETTINGS (estilo TDR): alta/baja de trunks y edición de señalización
-   (aviso "reinicia para aplicar el puerto").
-4. Luego: lanzar ESCENARIOS desde la web; escenarios UAS; save/match; inyección CSV.
-5. Fase 3: carga (cps + concurrencia, patrón del Dimitri-4000) + stats en vivo.
-6. Media RTP (Fase 5): subir audio (MP3→G.711) y oír las llamadas.
-7. Revisar el WARN de sipgo al cerrar el socket UDP (cosmético).
+## Próximos pasos (orden actual tras G1/G2/Paso A)
+1. **Paso B — Escenarios SIPp en la web:** panel para listar y lanzar los YAML de
+   examples/scenarios/ desde un agente (motor runner ya existe). Luego ampliar el
+   runner: escenarios UAS, save/match, inyección CSV.
+2. **Enrutado por número (idea del usuario, para MÁS ADELANTE):** cómo enrutar una
+   llamada entrante al agente destino por el número (To/Request-URI), o enrutado en
+   general entre agentes del mismo proceso. Pensar si lo hace un "router" interno o
+   se delega siempre en el SBC/PBX. Decisión pendiente.
+3. **SETTINGS por agente:** editar bind_ip/sip_port/answer_mode (parar+recrear el
+   agente lo aplica en caliente, ya que el agente puede pararse/arrancarse).
+4. **TRUNKS desde la web:** API GET/POST/DELETE /api/trunks + panel; conectar
+   config.Store ↔ faro dinámico (el motor ya está listo).
+5. **G2.1 (pulido):** si el puerto de un agente nuevo está ocupado, hoy queda
+   'running' aunque Serve falle (bind asíncrono); detectar y reflejar el error.
+6. Fase 3: carga (cps + concurrencia, patrón del Dimitri-4000) + stats en vivo.
+7. Media RTP (Fase 5): subir audio (MP3→G.711) y oír las llamadas.
+8. G3: empaquetado Wails (app de escritorio reutilizando la web).
+9. Revisar el WARN de sipgo al cerrar el socket UDP (cosmético).
 
 ## Decisiones tomadas
 - **Conformidad RFC (principio rector):** todo debe cumplir las RFC de SIP (3261 y

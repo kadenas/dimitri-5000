@@ -39,6 +39,8 @@ type CallRec struct {
 
 	// interno: para solicitar el colgado manual desde la web.
 	hangup chan struct{}
+	// interno: los valores SIP con los que se lanzó la llamada.
+	invite sipcore.RichInvite
 }
 
 // Controller gestiona el motor y el registro de llamadas.
@@ -66,17 +68,25 @@ func New(ctx context.Context, core *sipcore.Core, log *slog.Logger) *Controller 
 	}
 }
 
-// PlaceCall lanza una llamada UAC al destino 'to'. Si holdSeconds > 0, la cuelga
-// automáticamente tras ese tiempo; si es 0, se mantiene hasta que se pida colgar.
-// Devuelve el id de la llamada para seguirla.
-func (c *Controller) PlaceCall(to string, holdSeconds int) string {
+// CallSpec describe la llamada a lanzar: los valores SIP concretos (identidades,
+// destino, cabeceras), el tiempo de sostenimiento y un texto para mostrar.
+type CallSpec struct {
+	Invite  sipcore.RichInvite // valores SIP de la llamada
+	Hold    int                // segundos a mantener establecida (0 = hasta colgar a mano)
+	Display string             // texto a mostrar en la columna TARGET de la web
+}
+
+// PlaceCall lanza una llamada UAC según la especificación dada. Devuelve el id de
+// la llamada para seguirla.
+func (c *Controller) PlaceCall(spec CallSpec) string {
 	id := genID()
 	rec := &CallRec{
 		ID:        id,
-		To:        to,
+		To:        spec.Display,
 		State:     StateDialing,
 		StartedAt: now(),
 		hangup:    make(chan struct{}),
+		invite:    spec.Invite,
 	}
 
 	c.mu.Lock()
@@ -84,7 +94,7 @@ func (c *Controller) PlaceCall(to string, holdSeconds int) string {
 	c.order = append(c.order, id)
 	c.mu.Unlock()
 
-	go c.run(rec, holdSeconds)
+	go c.run(rec, spec.Hold)
 	return id
 }
 
@@ -96,7 +106,7 @@ func (c *Controller) run(rec *CallRec, holdSeconds int) {
 	callCtx, cancel := context.WithCancel(c.ctx)
 	defer cancel()
 
-	call, err := c.core.DialURI(callCtx, rec.To, nil)
+	call, err := c.core.DialInvite(callCtx, rec.invite)
 	if err != nil {
 		c.fail(rec, "no se pudo enviar el INVITE: "+err.Error())
 		return

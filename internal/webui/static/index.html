@@ -12,7 +12,7 @@
     <div class="wordmark">
       <span class="dim">DIMITRI</span><span class="slash">//</span><span class="num">5000</span>
     </div>
-    <div class="sub">SIP&nbsp;TEST&nbsp;SYSTEM · v0.5</div>
+    <div class="sub">SIP&nbsp;TEST&nbsp;SYSTEM · v0.6</div>
     <div class="sysline" id="sysline">
       <span id="clock">--:--:--</span>
     </div>
@@ -91,7 +91,48 @@
         </label>
         <button type="submit" class="btn-dial">DIAL ▸</button>
       </form>
-      <div class="hint" id="form-hint">0 = mantener hasta colgar a mano.</div>
+
+      <!-- Valores SIP concretos (identidades, SBC, PAI, cabeceras). Plegable. -->
+      <button type="button" id="adv-toggle" class="adv-toggle">▸ VALORES SIP / SBC</button>
+      <div id="adv" class="panel control adv hidden">
+        <label class="field">
+          <span>DEST&nbsp;HOST&nbsp;(SBC)</span>
+          <input type="text" id="dest-host" placeholder="ip del SBC" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>DEST&nbsp;PORT</span>
+          <input type="number" id="dest-port" placeholder="5060" min="1" max="65535" />
+        </label>
+        <label class="field">
+          <span>FROM&nbsp;USER</span>
+          <input type="text" id="from-user" placeholder="1000" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>FROM&nbsp;DOMAIN</span>
+          <input type="text" id="from-domain" placeholder="pbx.local" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>FROM&nbsp;DISPLAY</span>
+          <input type="text" id="from-display" placeholder="Pruebas" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>TO&nbsp;USER</span>
+          <input type="text" id="to-user" placeholder="2000" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>TO&nbsp;DOMAIN</span>
+          <input type="text" id="to-domain" placeholder="dominio del To" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>PAI</span>
+          <input type="text" id="pai-user" placeholder="número PAI" autocomplete="off" />
+        </label>
+        <label class="field grow">
+          <span>HEADERS&nbsp;(uno por línea: Nombre: Valor)</span>
+          <textarea id="headers" rows="2" placeholder="Diversion: <sip:300@pbx.local>"></textarea>
+        </label>
+      </div>
+      <div class="hint" id="form-hint">0 = mantener hasta colgar a mano. Si rellenas DEST HOST, el INVITE se envía ahí (el SBC) y el To lleva su dominio.</div>
     </section>
 
     <!-- Bloque: llamadas en vivo -->

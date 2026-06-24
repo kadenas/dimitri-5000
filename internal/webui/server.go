@@ -21,6 +21,7 @@ import (
 	"github.com/kadenas/dimitri-5000/internal/agent"
 	"github.com/kadenas/dimitri-5000/internal/control"
 	"github.com/kadenas/dimitri-5000/internal/monitor"
+	"github.com/kadenas/dimitri-5000/internal/sipcore"
 )
 
 // go:embed mete los ficheros de la carpeta static/ DENTRO del binario, para que
@@ -264,11 +265,25 @@ func (s *Server) handleCalls(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, out)
 }
 
-// placeCallReq es el cuerpo JSON para lanzar una llamada.
+// placeCallReq es el cuerpo JSON para lanzar una llamada. Admite dos modos:
+//   - simple: solo 'to' (URI completa), p. ej. "sip:192.168.1.10:5060".
+//   - enriquecido: destino + identidades + PAI + cabeceras (para pruebas por SBC).
 type placeCallReq struct {
 	AgentID string `json:"agent_id"` // qué agente origina (vacío = "default")
-	To      string `json:"to"`       // destino, p. ej. "sip:192.168.1.10:5060"
-	Hold    int    `json:"hold"`     // segundos a mantener la llamada (0 = hasta colgar a mano)
+	Hold    int    `json:"hold"`     // segundos a mantener (0 = hasta colgar a mano)
+
+	To string `json:"to"` // modo simple: destino como URI completa
+
+	// Modo enriquecido (todos opcionales; si vienen, mandan sobre 'to').
+	DestHost    string            `json:"dest_host"`    // a dónde se envía (SBC o peer)
+	DestPort    int               `json:"dest_port"`    // puerto del destino real
+	FromUser    string            `json:"from_user"`    // número origen
+	FromDomain  string            `json:"from_domain"`  // dominio del From
+	FromDisplay string            `json:"from_display"` // nombre visible del llamante
+	ToUser      string            `json:"to_user"`      // número destino
+	ToDomain    string            `json:"to_domain"`    // dominio del To
+	PaiUser     string            `json:"pai_user"`     // P-Asserted-Identity (número)
+	Headers     map[string]string `json:"headers"`      // cabeceras arbitrarias
 }
 
 // controlFor devuelve el control de llamadas del agente indicado (o "default").
@@ -286,24 +301,79 @@ func (s *Server) controlFor(agentID string) *control.Controller {
 	return a.Control()
 }
 
-// handlePlaceCall lanza una llamada UAC desde el agente indicado.
+// handlePlaceCall lanza una llamada UAC desde el agente indicado. Construye el
+// INVITE a partir de los campos enriquecidos o, si solo llega 'to', parseando la URI.
 func (s *Server) handlePlaceCall(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "usa POST", http.StatusMethodNotAllowed)
 		return
 	}
 	var req placeCallReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.To == "" {
-		http.Error(w, "JSON inválido: se requiere 'to'", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "JSON inválido", http.StatusBadRequest)
 		return
 	}
+
+	spec, err := buildCallSpec(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	ctrl := s.controlFor(req.AgentID)
 	if ctrl == nil {
 		http.Error(w, "agente no disponible o parado", http.StatusServiceUnavailable)
 		return
 	}
-	id := ctrl.PlaceCall(req.To, req.Hold)
+	id := ctrl.PlaceCall(spec)
 	s.writeJSON(w, map[string]string{"id": id})
+}
+
+// buildCallSpec traduce la petición web a la especificación de llamada. El destino
+// real (DestHost:DestPort) sale de los campos enriquecidos o de parsear 'to'.
+func buildCallSpec(req placeCallReq) (control.CallSpec, error) {
+	inv := sipcore.RichInvite{
+		DestHost:    req.DestHost,
+		DestPort:    req.DestPort,
+		FromUser:    req.FromUser,
+		FromDomain:  req.FromDomain,
+		FromDisplay: req.FromDisplay,
+		ToUser:      req.ToUser,
+		ToDomain:    req.ToDomain,
+		PAIUser:     req.PaiUser,
+		Headers:     req.Headers,
+	}
+
+	// Si no se indicó destino explícito, lo tomamos de la URI simple 'to'.
+	if inv.DestHost == "" {
+		if req.To == "" {
+			return control.CallSpec{}, errors.New("indica un destino: 'to' (URI) o 'dest_host'")
+		}
+		host, port, user, err := sipcore.SplitURI(req.To)
+		if err != nil {
+			return control.CallSpec{}, err
+		}
+		inv.DestHost = host
+		inv.DestPort = port
+		if inv.ToUser == "" {
+			inv.ToUser = user // el número del Request-URI, si lo traía
+		}
+	}
+	if inv.DestPort == 0 {
+		inv.DestPort = 5060 // puerto SIP por defecto
+	}
+
+	// Texto a mostrar en la tabla de llamadas.
+	display := req.To
+	if display == "" {
+		if inv.ToUser != "" {
+			display = "sip:" + inv.ToUser + "@" + inv.DestHost
+		} else {
+			display = "sip:" + inv.DestHost
+		}
+	}
+
+	return control.CallSpec{Invite: inv, Hold: req.Hold, Display: display}, nil
 }
 
 // handleHangup cuelga una llamada en curso. Busca el id en todos los agentes.

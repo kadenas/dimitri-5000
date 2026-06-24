@@ -79,6 +79,100 @@ func (c *Core) DialURIWithOptions(ctx context.Context, uri string, opts CallOpti
 	return &UACCall{session: session}, nil
 }
 
+// SplitURI parsea un destino "sip:user@host:port" (o "sip:host:port") y devuelve
+// sus partes. Lo usa la web para el modo simple de PLACE CALL (solo URI), sin que
+// las capas superiores tengan que conocer sipgo.
+func SplitURI(uri string) (host string, port int, user string, err error) {
+	var u sip.Uri
+	if err := sip.ParseUri(uri, &u); err != nil {
+		return "", 0, "", fmt.Errorf("URI inválida %q: %w", uri, err)
+	}
+	return u.Host, u.Port, u.User, nil
+}
+
+// RichInvite describe una llamada con valores SIP concretos, pensada para
+// pruebas realistas contra un SBC/PBX: identidades (From/To con número y dominio),
+// destino real del paquete (el SBC, separado del To), P-Asserted-Identity y
+// cabeceras arbitrarias.
+//
+// Clave para atravesar un SBC: el Request-URI se envía a DestHost:DestPort (el
+// SBC), pero el To puede llevar otro dominio. El SBC enruta por el número y
+// entrega la llamada a su destino real (p. ej. otro agente nuestro).
+type RichInvite struct {
+	DestHost string // a dónde se envía de verdad el INVITE (SBC o peer). Host del Request-URI
+	DestPort int    // puerto del destino real
+	Transport string // "udp"|"tcp" (vacío = udp)
+
+	FromUser    string // número/usuario origen
+	FromDomain  string // dominio del From (vacío = IP de bind)
+	FromDisplay string // nombre visible del llamante (opcional)
+
+	ToUser   string // número/usuario destino (vacío = sin user en el Request-URI)
+	ToDomain string // dominio del To (vacío = DestHost)
+
+	PAIUser string // P-Asserted-Identity: número (vacío = no se añade la cabecera)
+
+	Headers map[string]string // cabeceras arbitrarias (Diversion, X-..., etc.)
+	Body    []byte            // cuerpo (SDP). nil = sin cuerpo
+}
+
+// DialInvite construye y envía un INVITE con valores concretos (identidades,
+// destino, PAI y cabeceras), devolviendo la llamada para esperar la respuesta.
+// Es la vía "humana" para recrear comportamientos reales de telco.
+func (c *Core) DialInvite(ctx context.Context, ri RichInvite) (*UACCall, error) {
+	// --- Request-URI: a dónde va dirigida (y a dónde se envía el paquete) ---
+	recipient := sip.Uri{Scheme: "sip", User: ri.ToUser, Host: ri.DestHost, Port: ri.DestPort}
+	transport := ri.Transport
+	if transport == "" {
+		transport = "udp"
+	}
+	if transport == "tcp" {
+		recipient.UriParams = sip.NewParams()
+		recipient.UriParams.Add("transport", "tcp")
+	}
+
+	// --- From: identidad del llamante, con su tag (obligatorio para el diálogo) ---
+	fromDomain := ri.FromDomain
+	if fromDomain == "" {
+		fromDomain = c.bindIP
+	}
+	from := &sip.FromHeader{
+		DisplayName: ri.FromDisplay,
+		Address:     sip.Uri{Scheme: "sip", User: ri.FromUser, Host: fromDomain},
+		Params:      sip.NewParams(),
+	}
+	from.Params.Add("tag", sip.GenerateTagN(16))
+
+	// --- To: a quién va dirigida (dominio puede diferir del destino real) ---
+	toDomain := ri.ToDomain
+	if toDomain == "" {
+		toDomain = ri.DestHost
+	}
+	to := &sip.ToHeader{
+		Address: sip.Uri{Scheme: "sip", User: ri.ToUser, Host: toDomain},
+	}
+
+	// Cabeceras tipadas primero; sipgo las respeta y no las regenera.
+	headers := []sip.Header{from, to}
+
+	// P-Asserted-Identity (identidad asegurada), habitual en SBC/PBX.
+	if ri.PAIUser != "" {
+		pai := fmt.Sprintf("<sip:%s@%s>", ri.PAIUser, fromDomain)
+		headers = append(headers, sip.NewHeader("P-Asserted-Identity", pai))
+	}
+
+	// Cabeceras arbitrarias del usuario.
+	for nombre, valor := range ri.Headers {
+		headers = append(headers, sip.NewHeader(nombre, valor))
+	}
+
+	session, err := c.dialogClient.Invite(ctx, recipient, ri.Body, headers...)
+	if err != nil {
+		return nil, fmt.Errorf("enviando INVITE: %w", err)
+	}
+	return &UACCall{session: session}, nil
+}
+
 // WaitAnswer bloquea hasta recibir la respuesta final del INVITE. Devuelve nil
 // si la llamada fue contestada (2xx); error en caso de rechazo (4xx/5xx/6xx),
 // timeout o cancelación del contexto. Si el contexto se cancela mientras se
@@ -166,7 +260,17 @@ func (c *Core) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 		c.log.Error("INVITE entrante inválido", "error", err)
 		return
 	}
-	c.log.Info("llamada entrante", "from", req.From().Address.String())
+	// Registramos los datos clave de la llamada entrante: útil para verificar que
+	// las identidades y cabeceras (p. ej. tras atravesar un SBC) llegan correctas.
+	entrante := []any{
+		"from", req.From().Address.String(),
+		"to", req.To().Address.String(),
+		"r-uri", req.Recipient.String(),
+	}
+	if pai := req.GetHeader("P-Asserted-Identity"); pai != nil {
+		entrante = append(entrante, "pai", pai.Value())
+	}
+	c.log.Info("llamada entrante", entrante...)
 
 	// 180 Ringing: avisamos de que "suena" antes de contestar.
 	if c.uas.RingDelay > 0 {
