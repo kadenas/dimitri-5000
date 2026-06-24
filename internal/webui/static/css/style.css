@@ -340,6 +340,29 @@ main { padding: 24px 28px 60px; max-width: 1280px; }
   letter-spacing: 0.2em;
   font-size: 12px;
 }
+/* Filas del ladder clicables y panel de detalle del mensaje */
+.lad-click { cursor: pointer; }
+.lad-click:hover { background: #161616; }
+.lad-detail {
+  margin: 12px 0 0;
+  padding: 14px 16px;
+  background: #0c0c0c;
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 360px;
+  overflow: auto;
+}
+
+/* Botonera de la llamada seleccionada */
+.call-control { align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.call-control .btn-mini { margin-left: 6px; }
+.grid tr.row-sel { background: #1c1c10; }
+.grid tr[data-call] { cursor: pointer; }
 
 /* Desplegables con el mismo lenguaje visual que los inputs */
 .field select {

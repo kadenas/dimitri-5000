@@ -20,6 +20,8 @@ let selectedTrunkAgent = "default"; // agente que monitoriza el trunk a dar de a
 let agentsCache = [];            // última lista de agentes (para resolver destino)
 let selectedCall = "";           // Call-ID elegido en el ladder
 let showOptions = false;         // mostrar diálogos de OPTIONS (keepalive) en el ladder
+let selectedCallId = "";         // id de la llamada seleccionada para la botonera
+let ladderArrows = [];           // flechas del ladder actual (para el detalle de mensaje)
 
 // Escapa texto para no inyectar HTML al construir filas.
 function esc(s) {
@@ -234,18 +236,17 @@ function renderCalls(datos) {
     tbody.innerHTML = '<tr class="empty"><td colspan="8">NO ACTIVE CALLS</td></tr>';
     return;
   }
+  // Si la llamada seleccionada ya no está, deseleccionamos.
+  if (selectedCallId && !datos.some((c) => c.id === selectedCallId)) selectedCallId = "";
+
   // Las más recientes arriba.
   const filas = datos.slice().reverse().map((c) => {
     const activa = c.state === "dialing" || c.state === "ringing" || c.state === "established";
-    const establecida = c.state === "established";
-    // El desvío (REFER) solo tiene sentido sobre una llamada ya establecida.
-    const xfer = establecida
-      ? ' <button class="btn-mini" data-xfer="' + esc(c.id) + '">XFER</button>'
-      : "";
     const accion = activa
-      ? '<button class="btn-hangup" data-id="' + esc(c.id) + '">HANGUP</button>' + xfer
+      ? '<button class="btn-hangup" data-id="' + esc(c.id) + '">HANGUP</button>'
       : '<button class="btn-hangup" disabled>—</button>';
-    return "<tr>" +
+    const sel = c.id === selectedCallId ? ' class="row-sel"' : "";
+    return "<tr data-call=\"" + esc(c.id) + "\"" + sel + ">" +
       "<td>" + esc(c.agent_id) + "</td>" +
       "<td>" + esc(c.id) + "</td>" +
       "<td>" + esc(c.to) + "</td>" +
@@ -258,25 +259,28 @@ function renderCalls(datos) {
   });
   tbody.innerHTML = filas.join("");
 
-  // Enganchar los botones de colgar.
+  // Clic en una fila: seleccionar la llamada para la botonera.
+  tbody.querySelectorAll("tr[data-call]").forEach((tr) => {
+    tr.addEventListener("click", (ev) => {
+      if (ev.target.closest("button")) return; // no robar el clic a HANGUP
+      selectedCallId = tr.dataset.call;
+      updateCallControl();
+      renderCalls(datos); // re-pinta para resaltar la fila
+    });
+  });
+
+  // Botones de colgar por fila.
   tbody.querySelectorAll(".btn-hangup[data-id]").forEach((b) => {
     b.addEventListener("click", () => hangup(b.dataset.id).then(refresh));
   });
 
-  // Enganchar los botones de desvío (REFER): piden el destino y mandan el REFER.
-  tbody.querySelectorAll(".btn-mini[data-xfer]").forEach((b) => {
-    b.addEventListener("click", async () => {
-      const destino = prompt("Desviar (REFER) a:", "sip:3000@192.168.0.128:5072");
-      if (!destino) return;
-      const res = await fetch("/api/call/transfer", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: b.dataset.xfer, refer_to: destino }),
-      });
-      if (!res.ok) alert("Error en desvío: " + (await res.text()));
-      refresh();
-    });
-  });
+  updateCallControl();
+}
+
+// Refleja la llamada seleccionada en la botonera (id mostrado).
+function updateCallControl() {
+  const inp = document.getElementById("sel-call");
+  if (inp) inp.value = selectedCallId || "";
 }
 
 function renderTrunks(datos) {
@@ -354,7 +358,7 @@ function buildArrows(events) {
     } else {
       label = e.method;
     }
-    arrows.push({ time: e.time, sender, receiver, label, kind: e.kind });
+    arrows.push({ time: e.time, sender, receiver, label, kind: e.kind, raw: e.raw });
   }
   return arrows;
 }
@@ -379,14 +383,15 @@ function renderLadder(events) {
   document.getElementById("lane-left").textContent = left;
   document.getElementById("lane-right").textContent = right;
 
-  cont.innerHTML = arrows.map((a) => {
+  ladderArrows = arrows; // para el panel de detalle (cabeceras + cuerpo)
+  cont.innerHTML = arrows.map((a, i) => {
     const haciaDerecha = a.sender === left;
     const flecha = haciaDerecha
       ? '<span class="lad-line">────────▶</span>'
       : '<span class="lad-line rev">◀────────</span>';
     const clase = a.kind === "response" ? "resp" : "req";
     const hora = (a.time.split("T")[1] || a.time);
-    return '<div class="lad-row">' +
+    return '<div class="lad-row lad-click" data-idx="' + i + '">' +
       '<span class="lad-time">' + esc(hora) + "</span>" +
       '<div class="lad-flow ' + (haciaDerecha ? "r" : "l") + '">' +
         '<span class="lad-label ' + clase + '">' + esc(a.label) + "</span>" +
@@ -394,6 +399,14 @@ function renderLadder(events) {
       "</div>" +
       "</div>";
   }).join("");
+
+  // Clic en un mensaje: mostrar su contenido completo (cabeceras + cuerpo).
+  cont.querySelectorAll(".lad-click").forEach((row) => {
+    row.addEventListener("click", () => {
+      const a = ladderArrows[parseInt(row.dataset.idx, 10)];
+      document.getElementById("lad-detail").textContent = a && a.raw ? a.raw : "(sin contenido)";
+    });
+  });
 }
 
 // Trae las llamadas de la traza y, si hay una elegida, sus eventos para el ladder.
@@ -638,6 +651,30 @@ document.getElementById("trunk-form").addEventListener("submit", async (ev) => {
     hint.textContent = "Error: " + e.message;
     hint.className = "hint error";
   }
+});
+
+// ---- Botonera de la llamada seleccionada ----
+document.getElementById("btn-hangup").addEventListener("click", () => {
+  if (!selectedCallId) return;
+  hangup(selectedCallId).then(refresh);
+});
+document.getElementById("btn-xfer").addEventListener("click", async () => {
+  if (!selectedCallId) {
+    alert("Selecciona primero una llamada (clic en su fila).");
+    return;
+  }
+  const destino = val("xfer-to");
+  if (!destino) {
+    alert("Indica el destino del desvío (REFER-TO).");
+    return;
+  }
+  const res = await fetch("/api/call/transfer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: selectedCallId, refer_to: destino }),
+  });
+  if (!res.ok) alert("Error en desvío: " + (await res.text()));
+  refresh();
 });
 
 // ---- Controles del ladder ----

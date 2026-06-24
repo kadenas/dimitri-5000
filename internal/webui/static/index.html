@@ -12,7 +12,7 @@
     <div class="wordmark">
       <span class="dim">DIMITRI</span><span class="slash">//</span><span class="num">5000</span>
     </div>
-    <div class="sub">SIP&nbsp;TEST&nbsp;SYSTEM · v0.11</div>
+    <div class="sub">SIP&nbsp;TEST&nbsp;SYSTEM · v0.12</div>
     <div class="sysline" id="sysline">
       <span id="clock">--:--:--</span>
     </div>
@@ -142,6 +142,23 @@
     <!-- Bloque: llamadas en vivo -->
     <section class="block">
       <h2 class="block-title"><span class="idx">03</span> CALLS</h2>
+
+      <!-- Botonera de la llamada SELECCIONADA (clic en una fila para elegirla) -->
+      <div class="panel control call-control">
+        <label class="field">
+          <span>SELECTED&nbsp;CALL</span>
+          <input type="text" id="sel-call" readonly placeholder="— clic en una fila —" />
+        </label>
+        <label class="field grow">
+          <span>REFER-TO&nbsp;(desvío)</span>
+          <input type="text" id="xfer-to" placeholder="sip:3000@192.168.0.128:5072" autocomplete="off" />
+        </label>
+        <button type="button" id="btn-hold" class="btn-mini" disabled title="Requiere media (Fase 5)">HOLD</button>
+        <button type="button" id="btn-resume" class="btn-mini" disabled title="Requiere media (Fase 5)">RESUME</button>
+        <button type="button" id="btn-xfer" class="btn-mini">XFER</button>
+        <button type="button" id="btn-hangup" class="btn-mini danger">HANGUP</button>
+      </div>
+
       <table class="grid">
         <thead>
           <tr>
@@ -273,6 +290,7 @@
           <div class="lad-empty">SELECCIONA UNA LLAMADA</div>
         </div>
       </div>
+      <pre id="lad-detail" class="lad-detail">Clic en un mensaje para ver sus cabeceras y cuerpo.</pre>
     </section>
   </main>
 

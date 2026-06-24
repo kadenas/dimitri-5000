@@ -1,7 +1,24 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-06-24 (sesión 7: + señalización simétrica + trunks por agente v0.10)
+Fecha: 2026-06-24 (sesión 7: + REFER + botonera de llamada + traza con contenido v0.12)
+
+## Sesión 7 (cont.) — REFER, botonera y traza con headers (v0.11/v0.12)
+- DESVÍO (REFER): sipcore.UACCall.Refer(referTo) envía REFER in-dialog (sipgo monta
+  cabeceras de diálogo; fijamos Request-URI=contacto remoto + Refer-To). onRefer
+  acepta entrantes con 202. control.Transfer(id, referTo). webui POST
+  /api/call/transfer. Verificado: REFER->202, CSeq correcto, visible en traza.
+- BOTONERA de la llamada SELECCIONADA (panel 03 CALLS): clic en una fila la
+  selecciona (resaltada); barra con HOLD/RESUME (deshabilitados: requieren media),
+  XFER (usa input REFER-TO) y HANGUP. Resuelve operar 1 llamada entre muchas.
+- TRAZA con CONTENIDO: el Store ya guardaba 'raw'; ahora clic en un mensaje del
+  ladder muestra el SIP completo (cabeceras+cuerpo) en panel #lad-detail. v0.12.
+
+## Pendientes pedidos por el usuario (entorno real Asterisk/Oracle SBC/Kamailio)
+- RTP/media (Fase 5): SDP con puertos negociados, RTP G.711 enviar/recibir/medir;
+  habilita HOLD real (re-INVITE a=sendonly/inactive) y oír llamadas. G.729: solo
+  medir/ofertar (decode necesitaría bcg729/cgo GPL).
+- Escenarios SIPp en la web (Paso B): runner ya existe; falta UI para listar/lanzar.
 
 ## Sesión 7 (cont.) — fix puertos simétricos + trunks por agente (v0.10)
 - FIX RAÍZ DE PUERTOS: usábamos sipgo WithClientPort, que solo fija el puerto del
