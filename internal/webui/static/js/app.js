@@ -237,8 +237,13 @@ function renderCalls(datos) {
   // Las más recientes arriba.
   const filas = datos.slice().reverse().map((c) => {
     const activa = c.state === "dialing" || c.state === "ringing" || c.state === "established";
+    const establecida = c.state === "established";
+    // El desvío (REFER) solo tiene sentido sobre una llamada ya establecida.
+    const xfer = establecida
+      ? ' <button class="btn-mini" data-xfer="' + esc(c.id) + '">XFER</button>'
+      : "";
     const accion = activa
-      ? '<button class="btn-hangup" data-id="' + esc(c.id) + '">HANGUP</button>'
+      ? '<button class="btn-hangup" data-id="' + esc(c.id) + '">HANGUP</button>' + xfer
       : '<button class="btn-hangup" disabled>—</button>';
     return "<tr>" +
       "<td>" + esc(c.agent_id) + "</td>" +
@@ -256,6 +261,21 @@ function renderCalls(datos) {
   // Enganchar los botones de colgar.
   tbody.querySelectorAll(".btn-hangup[data-id]").forEach((b) => {
     b.addEventListener("click", () => hangup(b.dataset.id).then(refresh));
+  });
+
+  // Enganchar los botones de desvío (REFER): piden el destino y mandan el REFER.
+  tbody.querySelectorAll(".btn-mini[data-xfer]").forEach((b) => {
+    b.addEventListener("click", async () => {
+      const destino = prompt("Desviar (REFER) a:", "sip:3000@192.168.0.128:5072");
+      if (!destino) return;
+      const res = await fetch("/api/call/transfer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: b.dataset.xfer, refer_to: destino }),
+      });
+      if (!res.ok) alert("Error en desvío: " + (await res.text()));
+      refresh();
+    });
   });
 }
 

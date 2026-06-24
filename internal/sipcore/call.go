@@ -16,6 +16,7 @@ package sipcore
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/emiago/sipgo"
@@ -206,6 +207,47 @@ func (call *UACCall) Hangup(ctx context.Context) error {
 	return call.session.Bye(ctx)
 }
 
+// Refer envía un REFER dentro del diálogo para DESVIAR la llamada (transferencia
+// ciega): pide al otro extremo que contacte con 'referTo'. sipgo construye las
+// cabeceras de diálogo (From/To/Call-ID/CSeq/Route/Contact); nosotros fijamos el
+// Request-URI (el contacto remoto) y la cabecera Refer-To. Devuelve la respuesta
+// (lo normal es 202 Accepted).
+func (call *UACCall) Refer(ctx context.Context, referTo string) (Result, error) {
+	// Request-URI = contacto remoto del 200 OK (o, en su defecto, el del INVITE).
+	var recipient sip.Uri
+	if call.session.InviteResponse != nil {
+		if contact := call.session.InviteResponse.Contact(); contact != nil {
+			recipient = contact.Address
+		}
+	}
+	if recipient.Host == "" {
+		recipient = call.session.InviteRequest.Recipient
+	}
+
+	req := sip.NewRequest(sip.REFER, recipient)
+	req.AppendHeader(sip.NewHeader("Refer-To", normalizeReferTo(referTo)))
+
+	start := time.Now()
+	res, err := call.session.Do(ctx, req)
+	rtt := time.Since(start)
+	if err != nil {
+		return Result{RTT: rtt}, err
+	}
+	return Result{Code: int(res.StatusCode), Reason: res.Reason, RTT: rtt}, nil
+}
+
+// normalizeReferTo asegura que el valor de Refer-To sea una URI SIP entre <>.
+func normalizeReferTo(v string) string {
+	v = strings.TrimSpace(v)
+	if !strings.HasPrefix(v, "sip:") && !strings.HasPrefix(v, "<") {
+		v = "sip:" + v
+	}
+	if !strings.HasPrefix(v, "<") {
+		v = "<" + v + ">"
+	}
+	return v
+}
+
 // ----------------------------- Rol UAS (recibir) -----------------------------
 
 // UASPolicy define cómo responde el servidor a una llamada entrante. Para la
@@ -249,6 +291,7 @@ func (c *Core) Serve(ctx context.Context, network, addr string) error {
 	srv.OnCancel(c.onCancel)
 	srv.OnOptions(c.onOptions) // responde a los OPTIONS de keepalive (rol "trunk")
 	srv.OnMessage(c.onMessage) // mensajería SIP (RFC 3428): responde 200 y notifica
+	srv.OnRefer(c.onRefer)     // desvío entrante: acepta el REFER con 202
 
 	c.log.Info("servidor SIP escuchando", "network", network, "addr", addr)
 	return srv.ListenAndServe(ctx, network, addr)
@@ -320,6 +363,21 @@ func (c *Core) onOptions(req *sip.Request, tx sip.ServerTransaction) {
 	res.AppendHeader(&c.contact) // dónde contactarnos
 	if err := tx.Respond(res); err != nil {
 		c.log.Error("respondiendo OPTIONS", "error", err)
+	}
+}
+
+// onRefer maneja un REFER entrante (desvío). En la v1 lo ACEPTAMOS con 202 para
+// que el flujo de transferencia sea coherente; la transferencia "completa" (que el
+// transferido lance el nuevo INVITE al Refer-To y mande NOTIFYs) la realiza un
+// SBC/PBX real, no nuestra parte de prueba.
+func (c *Core) onRefer(req *sip.Request, tx sip.ServerTransaction) {
+	referTo := ""
+	if h := req.GetHeader("Refer-To"); h != nil {
+		referTo = h.Value()
+	}
+	c.log.Info("REFER entrante (desvío)", "refer-to", referTo, "from", req.From().Address.String())
+	if err := tx.Respond(sip.NewResponseFromRequest(req, 202, "Accepted", nil)); err != nil {
+		c.log.Error("respondiendo REFER", "error", err)
 	}
 }
 

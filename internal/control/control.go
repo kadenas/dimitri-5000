@@ -41,6 +41,8 @@ type CallRec struct {
 	hangup chan struct{}
 	// interno: los valores SIP con los que se lanzó la llamada.
 	invite sipcore.RichInvite
+	// interno: la llamada UAC viva (para acciones in-dialog como el desvío).
+	call *sipcore.UACCall
 }
 
 // MessageRec es el registro de un MESSAGE (enviado o recibido) para mostrarlo.
@@ -148,6 +150,7 @@ func (c *Controller) run(rec *CallRec, holdSeconds int) {
 	c.update(rec, func(r *CallRec) {
 		r.State = StateEstablished
 		r.AnsweredAt = now()
+		r.call = call // disponible para acciones in-dialog (desvío)
 	})
 	c.log.Info("llamada establecida", "id", rec.ID)
 
@@ -229,6 +232,38 @@ func (c *Controller) MessagesSnapshot() []MessageRec {
 	out := make([]MessageRec, len(c.msgs))
 	copy(out, c.msgs)
 	return out
+}
+
+// Transfer desvía (REFER) una llamada establecida hacia 'referTo'. Devuelve false
+// si no existe la llamada; el resultado del REFER se refleja en LastCode/LastReason.
+func (c *Controller) Transfer(id, referTo string) bool {
+	c.mu.Lock()
+	rec, ok := c.calls[id]
+	var call *sipcore.UACCall
+	if ok {
+		call = rec.call
+	}
+	c.mu.Unlock()
+	if !ok || call == nil {
+		return false
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+		defer cancel()
+		res, err := call.Refer(ctx, referTo)
+		if err != nil {
+			c.log.Warn("desvío (REFER) falló", "id", id, "error", err)
+			c.update(rec, func(r *CallRec) { r.LastReason = "REFER: " + err.Error() })
+			return
+		}
+		c.log.Info("desvío (REFER) enviado", "id", id, "to", referTo, "code", res.Code)
+		c.update(rec, func(r *CallRec) {
+			r.LastCode = res.Code
+			r.LastReason = "REFER " + res.Reason
+		})
+	}()
+	return true
 }
 
 // Hangup solicita colgar una llamada en curso. Devuelve true si existía.

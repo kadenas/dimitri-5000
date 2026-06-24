@@ -68,7 +68,8 @@ func (s *Server) Run(ctx context.Context) error {
 	// API de control de llamadas (por agente).
 	mux.HandleFunc("/api/calls", s.handleCalls)        // GET: estado de las llamadas
 	mux.HandleFunc("/api/call", s.handlePlaceCall)     // POST: lanzar una llamada
-	mux.HandleFunc("/api/call/hangup", s.handleHangup) // POST: colgar una llamada
+	mux.HandleFunc("/api/call/hangup", s.handleHangup)     // POST: colgar una llamada
+	mux.HandleFunc("/api/call/transfer", s.handleTransfer) // POST: desviar (REFER)
 
 	// API de mensajería SIP (MESSAGE).
 	mux.HandleFunc("/api/messages", s.handleMessages) // GET: enviados y recibidos
@@ -623,6 +624,38 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	id := ctrl.SendMessage(spec, display)
 	s.writeJSON(w, map[string]string{"id": id})
+}
+
+// handleTransfer desvía (REFER) una llamada en curso. Busca el id en todos los
+// agentes y aplica el desvío en el que la tenga.
+func (s *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "usa POST", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.manager == nil {
+		http.Error(w, "gestor de agentes no disponible", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		ID      string `json:"id"`
+		ReferTo string `json:"refer_to"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID == "" || req.ReferTo == "" {
+		http.Error(w, "JSON inválido: se requieren 'id' y 'refer_to'", http.StatusBadRequest)
+		return
+	}
+	for _, info := range s.manager.Snapshot() {
+		a := s.manager.Get(info.ID)
+		if a == nil {
+			continue
+		}
+		if ctrl := a.Control(); ctrl != nil && ctrl.Transfer(req.ID, req.ReferTo) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+	}
+	http.Error(w, "llamada no encontrada o no establecida", http.StatusNotFound)
 }
 
 // handleHangup cuelga una llamada en curso. Busca el id en todos los agentes.
