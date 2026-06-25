@@ -424,3 +424,9 @@ main { padding: 24px 28px 60px; width: 100%; max-width: 1280px; margin: auto; }
 .conn.ok { color: var(--up); }
 .conn.bad { color: var(--down); }
 .brand-foot { color: var(--acid-dim); }
+
+/* Métricas de media (RTP) en la tabla CALLS: compactas y monoespaciadas. */
+.media { font-family: var(--mono); font-size: 11px; color: var(--ink); white-space: nowrap; }
+.media b { color: var(--acid); font-weight: 700; }
+.media .m-loss { color: var(--down); font-weight: 700; }
+.muted { color: var(--muted); }

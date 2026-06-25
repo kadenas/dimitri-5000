@@ -240,10 +240,25 @@ function fillDestSelect(selId, current) {
   dst.value = current;
 }
 
+// Resume las métricas de media (RTP) de una llamada en una celda compacta:
+// códec, paquetes enviados (↑) y recibidos (↓), pérdida (✕) y jitter. El detalle
+// (puertos local/remoto) va en el title para no recargar la fila.
+function mediaCell(m) {
+  if (!m) return '<span class="muted">—</span>';
+  const jit = typeof m.jitter_ms === "number" ? m.jitter_ms.toFixed(1) : "0.0";
+  const lossCls = m.lost > 0 ? ' class="m-loss"' : "";
+  return '<span class="media" title="' +
+      esc((m.codec || "?") + "  :" + (m.local_port || 0) + " <-> " + (m.remote_addr || "?")) +
+      '"><b>' + esc(m.codec || "?") + "</b> " +
+      "&uarr;" + (m.tx_packets || 0) + " &darr;" + (m.rx_packets || 0) +
+      ' <span' + lossCls + ">&#10005;" + (m.lost || 0) + "</span> " +
+      jit + "ms</span>";
+}
+
 function renderCalls(datos) {
   const tbody = document.getElementById("calls");
   if (!datos || datos.length === 0) {
-    tbody.innerHTML = '<tr class="empty"><td colspan="8">NO ACTIVE CALLS</td></tr>';
+    tbody.innerHTML = '<tr class="empty"><td colspan="9">NO ACTIVE CALLS</td></tr>';
     return;
   }
   // Si la llamada seleccionada ya no está, deseleccionamos.
@@ -264,6 +279,7 @@ function renderCalls(datos) {
       "<td>" + esc(codeText(c.last_code, c.last_reason)) + "</td>" +
       "<td>" + hhmmss(c.started_at) + "</td>" +
       "<td>" + hhmmss(c.answered_at) + "</td>" +
+      "<td>" + mediaCell(c.media) + "</td>" +
       '<td class="right">' + accion + "</td>" +
       "</tr>";
   });
