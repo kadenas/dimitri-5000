@@ -1,7 +1,50 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-06-25 (sesión 9: Fase 5.1 media RTP + Fase 5.2 audio propio WAV)
+Fecha: 2026-06-25 (sesión 10: UX autocompletado + HOLD ∞ + Fase 3 motor de carga)
+
+## Sesión 10 — UX, comportamiento de llamada y Fase 3 (motor de carga)
+- UX (rellenar a golpe de ratón):
+  - NUEVO endpoint GET /api/netinfo -> {local_ip, ips:[{ip,label}]} usando el
+    netutil ya existente (webui/server.go).
+  - index.html + app.js: <datalist id="local-ips"> compartido; BIND IP (alta de
+    agente) se pre-rellena con la IP principal y sugiere las detectadas; DEST HOST
+    (SBC) sugiere lo mismo; al elegir TO AGENT en PLACE CALL se vuelca su
+    sip:ip:puerto al TARGET URI (visible y editable).
+- COMPORTAMIENTO DE LLAMADA: HOLD por defecto pasa de 10 -> 0 (∞). Una llamada
+  lanzada se SOSTIENE con RTP hasta que se cuelga con HANGUP (BYE) o un extremo la
+  termina; ya no se cae sola. El lado UAS ya esperaba el BYE (HoldTime 0). Campo
+  HOLD conservado por si se quiere duración fija. Verificado e2e.
+- FASE 3 — MOTOR DE CARGA (paquete SEPARADO internal/load; NO importa sipgo):
+  - Modelo elegido: "objetivo de N concurrentes". Sube a N llamadas establecidas
+    al ritmo CPS, las SOSTIENE con RTP (repone las que caen) y STOP las cuelga
+    todas con BYE. Spec{Invite, Concurrent, CPS, MaxCalls, Audio, WithMedia}.
+  - Generator con un objeto `run` POR EJECUCIÓN (contadores atómicos aislados):
+    así un STOP seguido de START no mezcla contadores mientras la anterior drena.
+    launchLoop (ticker a 1/cps, lanza si active+pending < N), worker por llamada
+    (DialInvite -> WaitAnswer -> Ack -> media -> espera STOP(ctx) o BYE remoto
+    (UACCall.Done())). Stop no bloquea: drena en segundo plano (Stopping=true).
+  - sipcore: NUEVO UACCall.Done() = session.Context().Done() (sipgo cancela el ctx
+    del diálogo al pasar a Ended -> detecta el BYE remoto para reponer).
+  - control: StartLoad/StopLoad/LoadStats (reutiliza el WAV del agente si WithMedia
+    y no se pasa audio). Una ejecución de carga por agente (loadGen en el Controller).
+  - webui: POST /api/load/start, POST /api/load/stop, GET /api/load (stats por
+    agente). UI: bloque 08 LOAD TEST (FROM/TO AGENT, TARGET URI, CONCURRENT N, CPS,
+    MAX 0=∞, checkbox MEDIA, START/STOP) + panel de chips con métricas en vivo
+    (TARGET/ACTIVE/PENDING/LAUNCHED/ESTABLISHED/FAILED/ENDED + RTP ↑↓/LOST). CSS
+    .load-stats/.load-chip.
+  - TESTS: internal/load/load_test.go (sostiene N y drena al parar) + go test -race
+    LIMPIO (el detector SÍ está disponible en este PC). Toda la batería en verde.
+  - VERIFICADO e2e (binario): N=20@cps30 sube en ~1s y se sostiene con RTP, 0
+    pérdida; STOP drena a 0. N=300@cps200 con media (600 diálogos + 600 sockets
+    RTP en un proceso loopback): 300 sostenidas, 0 fallidas, 0 pérdida, sin
+    errores/panics. ulimit -n = 1M (FDs no son límite).
+- PRÓXIMO (pedido por el usuario, "escenarios estilo SIPp"): que la carga pueda
+  ejecutar un ESCENARIO por llamada en vez del INVITE básico. El runner ya existe
+  pero hace su propio Dial+hangup; hay que adaptarlo para "sostener hasta STOP" y
+  exponer su ciclo de vida, y añadir un campo Scenario a load.Spec (el worker
+  ejecutaría el escenario). Validación a 1000+ conviene hacerla contra un destino
+  REAL (no loopback, que duplica la carga al tener UAC+UAS en el mismo proceso).
 
 ## Sesión 9 — Fase 5.1 (media RTP base) COMPLETA y verificada e2e
 - NUEVO PAQUETE internal/media (sin dependencias externas; NO importa sipgo):
