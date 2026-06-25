@@ -1,7 +1,41 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-06-24 (sesión 8: centrado web + Paso B escenarios en la web + plan Fase 5)
+Fecha: 2026-06-25 (sesión 9: Fase 5.1 — media RTP base con G.711 y métricas)
+
+## Sesión 9 — Fase 5.1 (media RTP base) COMPLETA y verificada e2e
+- NUEVO PAQUETE internal/media (sin dependencias externas; NO importa sipgo):
+  - rtp.go: cabecera RTP de 12 bytes (RFC 3550). Marshal simple (CC=0); ParsePacket
+    tolera CSRC y cabecera de extensión de otros emisores.
+  - g711.go: G.711 µ-law/A-law a mano, port fiel de la referencia ITU/Sun (sin CGO).
+  - sdp.go: BuildOffer/BuildAnswer (audio PCMU/PCMA), Parse (c=/m=audio/ptime) y
+    ChooseCodec (prefiere PCMU). Tolera c= de sesión y de media.
+  - session.go: socket UDP RTP; envía un tono 440 Hz codificado en G.711 cada 20 ms,
+    recibe y MIDE tx/rx (paquetes y bytes), pérdida (secuencia, RFC 3550 A.1) y
+    jitter de interarribo (§6.4.1). Open (puerto efímero) -> LocalPort -> Start.
+  - 13 tests en verde (silencio/monotonía G.711, round-trip RTP+CSRC, SDP, loopback).
+- CABLEADO al flujo de llamada:
+  - sipcore: Core.EnableMedia(); answerWithMedia parsea la oferta entrante, abre la
+    sesión, responde 200 con SDP (DialogServerSession.RespondSDP) y arranca el RTP.
+    Sesiones indexadas por Call-ID; se liberan en onBye, en el HoldTime del UAS y por
+    un backstop en Serve (ctx.Done) y en Close. UACCall.AnswerSDP() lee el SDP del 200.
+  - control: el UAC abre el socket, oferta SDP en el INVITE (Content-Type lo ponemos
+    nosotros; sipgo solo añade Content-Length), negocia la respuesta y arranca el RTP
+    (startUACMedia). Métricas en vivo en CallRec.Media, expuestas en /api/calls.
+  - agent: EnableMedia() al arrancar (entrantes contestan con SDP; salientes ofertan).
+  - web: nueva columna MEDIA (RTP) en el bloque CALLS (códec, ↑tx ↓rx, ✕pérdida en
+    rojo si >0, jitter ms; puertos en el title). mediaCell() en app.js, CSS .media.
+- VERIFICADO e2e (binario real): default -> uac-2 (:5072), SDP PCMU negociado
+  (41339<->50838), RTP bidireccional ~50 paq/s (99->200->300 tx/rx), 172 B/paq
+  (12 RTP + 160 G.711), 0 pérdida, jitter ~0.5 ms. Commits 5fecf9f (backend) y
+  6448fde (web). Build/vet/tests del proyecto en verde.
+- ENTORNO de este PC: Go 1.26.4 en ~/.local/go (instalado sin sudo; PATH en ~/.bashrc);
+  el proyecto es un clon git limpio de github.com/kadenas/dimitri-5000 (rama main).
+- LÍMITES conocidos: (1) el audio es un tono sintético hasta 5.2; (2) la media del
+  rol UAS (llamada ENTRANTE) fluye pero no muestra métricas en CALLS, porque las
+  entrantes no se registran como CallRec (las salientes sí). (3) Sin re-INVITE/HOLD aún.
+- PRÓXIMO: Fase 5.2 — subir audio propio (WAV -> G.711 -> RTP), sustituyendo el tono.
+  EMPEZAR POR WAV (sin deps); MP3 después con go-mp3 (Go puro, aprobar antes).
 
 ## Sesión 8 — centrado de la web + Paso B (escenarios en la web) + plan Fase 5
 - CENTRADO UI (solo CSS): body pasa a flex column (min-height:100vh) y main se
