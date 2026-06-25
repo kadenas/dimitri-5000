@@ -1,7 +1,7 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-06-25 (sesión 9: Fase 5.1 — media RTP base con G.711 y métricas)
+Fecha: 2026-06-25 (sesión 9: Fase 5.1 media RTP + Fase 5.2 audio propio WAV)
 
 ## Sesión 9 — Fase 5.1 (media RTP base) COMPLETA y verificada e2e
 - NUEVO PAQUETE internal/media (sin dependencias externas; NO importa sipgo):
@@ -31,11 +31,30 @@ Fecha: 2026-06-25 (sesión 9: Fase 5.1 — media RTP base con G.711 y métricas)
   6448fde (web). Build/vet/tests del proyecto en verde.
 - ENTORNO de este PC: Go 1.26.4 en ~/.local/go (instalado sin sudo; PATH en ~/.bashrc);
   el proyecto es un clon git limpio de github.com/kadenas/dimitri-5000 (rama main).
-- LÍMITES conocidos: (1) el audio es un tono sintético hasta 5.2; (2) la media del
-  rol UAS (llamada ENTRANTE) fluye pero no muestra métricas en CALLS, porque las
-  entrantes no se registran como CallRec (las salientes sí). (3) Sin re-INVITE/HOLD aún.
-- PRÓXIMO: Fase 5.2 — subir audio propio (WAV -> G.711 -> RTP), sustituyendo el tono.
-  EMPEZAR POR WAV (sin deps); MP3 después con go-mp3 (Go puro, aprobar antes).
+- LÍMITES conocidos: (1) la media del rol UAS (llamada ENTRANTE) fluye pero no
+  muestra métricas en CALLS, porque las entrantes no se registran como CallRec (las
+  salientes sí). (2) Sin re-INVITE/HOLD aún. (3) Solo G.711.
+
+## Sesión 9 (cont.) — Fase 5.2 (enviar audio propio) primera entrega
+- FUENTE DE AUDIO (internal/media/source.go): interfaz Source.NextFrame; ToneSource
+  (tono 440 Hz, por defecto) y PCMSource (reproduce un buffer PCM en bucle). El bucle
+  de envío de la sesión RTP tira de la fuente; Session.SetSource la cambia antes de
+  Start. Así el audio enviado deja de ser solo el tono.
+- DECODIFICADOR WAV (internal/media/wav.go, sin dependencias): DecodeWAV parsea los
+  chunks RIFF, soporta PCM 8/16 bits y cualquier nº de canales/frecuencia: mezcla a
+  mono y resamplea a 8 kHz por interpolación lineal. Tests de WAV y de las fuentes.
+- CABLEADO: control y core guardan el audio (SetAudio/ClearAudio); el Agent lo
+  persiste entre stop/start y lo aplica a su control (salientes) y su core (entrantes).
+  webui: POST /api/media (multipart agent_id+WAV) decodifica y carga; GET /api/media
+  (estado por agente); POST /api/media/clear (vuelve al tono). UI: panel AUDIO en
+  PLACE CALL (selector de agente, subir WAV, estado en segundos, CLEAR).
+- VERIFICADO e2e: subir un WAV 44100 Hz ESTÉREO -> 8000 muestras (1.0s; downmix +
+  resampleo a 8 kHz correctos) -> llamada default->uac-2 con RTP fluyendo desde el
+  audio (150/150 paq, 0 pérdida); CLEAR vuelve al tono. Commit 57e015c.
+- PRÓXIMO (Fase 5.3): grabar el RTP entrante a WAV y oírlo en el navegador con
+  <audio>. Luego 5.4: HOLD real (re-INVITE a=sendonly/inactive). Opcional: MP3 con
+  github.com/hajimehoshi/go-mp3 (Go puro, sin CGO; APROBAR antes de añadir la dep).
+  Opcional: registrar las llamadas ENTRANTES como CallRec para ver sus métricas.
 
 ## Sesión 8 — centrado de la web + Paso B (escenarios en la web) + plan Fase 5
 - CENTRADO UI (solo CSS): body pasa a flex column (min-height:100vh) y main se
