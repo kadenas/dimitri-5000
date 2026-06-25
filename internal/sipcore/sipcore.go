@@ -16,10 +16,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
+
+	"github.com/kadenas/dimitri-5000/internal/media"
 )
 
 // Core envuelve el UA y el Client de sipgo, que se reutilizan en cada envío.
@@ -50,6 +53,14 @@ type Core struct {
 
 	// msgHandler se invoca por cada MESSAGE entrante (mensajería SIP). Opcional.
 	msgHandler func(MessageEvent)
+
+	// Plano de media (RTP) para llamadas ENTRANTES (rol UAS). Si mediaEnabled está
+	// activo, al contestar un INVITE con oferta SDP abrimos una sesión RTP por
+	// llamada (indexada por Call-ID) que se cierra con el BYE o al parar el núcleo.
+	// El rol UAC (saliente) gestiona su media desde la capa de control.
+	mediaEnabled bool
+	mediaMu      sync.Mutex
+	mediaSess    map[string]*media.Session
 }
 
 // Result resume el resultado de un envío de OPTIONS.
@@ -113,13 +124,14 @@ func New(bindIP string, sipPort int, userAgent, fromDomain string, log *slog.Log
 	}
 
 	c := &Core{
-		ua:      ua,
-		client:  client,
-		log:     log,
-		bindIP:  bindIP,
-		sipPort: sipPort,
-		contact: contact,
-		uas:     defaultUASPolicy(),
+		ua:        ua,
+		client:    client,
+		log:       log,
+		bindIP:    bindIP,
+		sipPort:   sipPort,
+		contact:   contact,
+		uas:       defaultUASPolicy(),
+		mediaSess: make(map[string]*media.Session),
 	}
 	// Caché de diálogos salientes (UAC): lista para lanzar llamadas.
 	c.dialogClient = sipgo.NewDialogClientCache(client, contact)
@@ -166,6 +178,7 @@ func (c *Core) SendOptions(ctx context.Context, host string, port int, transport
 
 // Close libera los recursos del núcleo SIP (orden inverso a la creación).
 func (c *Core) Close() {
+	c.closeAllMedia() // cierra cualquier sesión RTP entrante que siguiera viva
 	if c.client != nil {
 		c.client.Close()
 	}

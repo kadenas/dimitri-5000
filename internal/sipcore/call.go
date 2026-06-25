@@ -202,6 +202,16 @@ func (call *UACCall) Ack(ctx context.Context) error {
 	return call.session.Ack(ctx)
 }
 
+// AnswerSDP devuelve el cuerpo SDP de la respuesta final (200 OK) al INVITE, o nil
+// si no la hubo o no traía cuerpo. Lo usa la capa de control para negociar la media
+// del lado UAC (saber a qué IP:puerto y con qué códec enviar el RTP).
+func (call *UACCall) AnswerSDP() []byte {
+	if call.session == nil || call.session.InviteResponse == nil {
+		return nil
+	}
+	return call.session.InviteResponse.Body()
+}
+
 // Hangup cuelga la llamada enviando BYE y espera el 200 de confirmación.
 func (call *UACCall) Hangup(ctx context.Context) error {
 	return call.session.Bye(ctx)
@@ -293,6 +303,13 @@ func (c *Core) Serve(ctx context.Context, network, addr string) error {
 	srv.OnMessage(c.onMessage) // mensajería SIP (RFC 3428): responde 200 y notifica
 	srv.OnRefer(c.onRefer)     // desvío entrante: acepta el REFER con 202
 
+	// Backstop: al cancelar el contexto del servidor (parada del agente o de la app)
+	// cerramos cualquier sesión de media entrante que siguiera viva.
+	go func() {
+		<-ctx.Done()
+		c.closeAllMedia()
+	}()
+
 	c.log.Info("servidor SIP escuchando", "network", network, "addr", addr)
 	return srv.ListenAndServe(ctx, network, addr)
 }
@@ -330,11 +347,20 @@ func (c *Core) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 		}
 	}
 
-	// Respuesta final según la política (200 = contestar). WriteResponse para un
-	// 2xx bloquea hasta recibir el ACK, dejando el diálogo confirmado.
-	if err := dlg.Respond(c.uas.AnswerCode, reasonFor(c.uas.AnswerCode), nil); err != nil {
-		c.log.Error("respondiendo final", "code", c.uas.AnswerCode, "error", err)
-		return
+	// Respuesta final según la política. Si vamos a contestar (2xx) y la media está
+	// activada, intentamos negociar audio: respondemos 200 con SDP y arrancamos la
+	// sesión RTP. Si no hay oferta válida (o la media está desactivada), contestamos
+	// con el código de la política sin cuerpo. WriteResponse para un 2xx bloquea
+	// hasta recibir el ACK, dejando el diálogo confirmado.
+	answeredWithMedia := false
+	if c.uas.AnswerCode >= 200 && c.uas.AnswerCode < 300 {
+		answeredWithMedia = c.answerWithMedia(req, dlg)
+	}
+	if !answeredWithMedia {
+		if err := dlg.Respond(c.uas.AnswerCode, reasonFor(c.uas.AnswerCode), nil); err != nil {
+			c.log.Error("respondiendo final", "code", c.uas.AnswerCode, "error", err)
+			return
+		}
 	}
 
 	// Si contestamos y hay HoldTime, colgamos nosotros tras ese tiempo.
@@ -346,7 +372,9 @@ func (c *Core) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 			if err := dlg.Bye(byeCtx); err != nil {
 				c.log.Error("enviando BYE (UAS)", "error", err)
 			}
+			c.closeMediaSession(callIDOf(req)) // colgamos nosotros: liberamos la media
 		case <-tx.Done():
+			c.closeMediaSession(callIDOf(req)) // cancelado/colgado: liberamos la media
 		}
 	}
 }
@@ -391,6 +419,9 @@ func (c *Core) onAck(req *sip.Request, tx sip.ServerTransaction) {
 // onBye enruta el BYE al diálogo correcto: primero los entrantes (UAS) y, si no
 // casa, los salientes (UAC). Así un mismo servidor sirve a ambos roles.
 func (c *Core) onBye(req *sip.Request, tx sip.ServerTransaction) {
+	// Si la llamada tenía media entrante (rol UAS), la liberamos al colgar. Para una
+	// llamada saliente (rol UAC) su Call-ID no está en el mapa y esto es un no-op.
+	c.closeMediaSession(callIDOf(req))
 	if c.dialogServer != nil {
 		if err := c.dialogServer.ReadBye(req, tx); err == nil {
 			return

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kadenas/dimitri-5000/internal/media"
 	"github.com/kadenas/dimitri-5000/internal/runner"
 	"github.com/kadenas/dimitri-5000/internal/scenario"
 	"github.com/kadenas/dimitri-5000/internal/sipcore"
@@ -46,12 +47,18 @@ type CallRec struct {
 	AnsweredAt string `json:"answered_at,omitempty"`
 	EndedAt    string `json:"ended_at,omitempty"`
 
+	// Media (RTP) negociada para esta llamada. Se rellena en cada Snapshot con las
+	// métricas en vivo (tx/rx, pérdida, jitter); nil si la llamada no tiene audio.
+	Media *media.Metrics `json:"media,omitempty"`
+
 	// interno: para solicitar el colgado manual desde la web.
 	hangup chan struct{}
 	// interno: los valores SIP con los que se lanzó la llamada.
 	invite sipcore.RichInvite
 	// interno: la llamada UAC viva (para acciones in-dialog como el desvío).
 	call *sipcore.UACCall
+	// interno: la sesión de media RTP viva (para leer métricas y cerrarla).
+	mediaSess *media.Session
 }
 
 // MessageRec es el registro de un MESSAGE (enviado o recibido) para mostrarlo.
@@ -145,7 +152,32 @@ func (c *Controller) run(rec *CallRec, holdSeconds int) {
 	callCtx, cancel := context.WithCancel(c.ctx)
 	defer cancel()
 
-	call, err := c.core.DialInvite(callCtx, rec.invite)
+	// Plano de media (RTP, rol UAC): abrimos el socket local y ofertamos G.711 en el
+	// INVITE. Trabajamos sobre una COPIA del invite (inv) para no mutar el registro
+	// compartido. Si algo de la media falla, seguimos con la llamada sin audio.
+	inv := rec.invite
+	var sess *media.Session
+	if s, err := media.Open(c.core.LocalIP(), c.log); err != nil {
+		c.log.Warn("no se pudo abrir el socket RTP; llamada sin audio", "id", rec.ID, "error", err)
+	} else {
+		sess = s
+		offer := media.BuildOffer(c.core.LocalIP(), sess.LocalPort())
+		hdr := make(map[string]string, len(rec.invite.Headers)+1)
+		for k, v := range rec.invite.Headers {
+			hdr[k] = v
+		}
+		hdr["Content-Type"] = "application/sdp"
+		inv.Headers = hdr
+		inv.Body = offer
+	}
+	// Cierre garantizado de la media al terminar la llamada (cuelgue, fallo o parada).
+	defer func() {
+		if sess != nil {
+			sess.Close()
+		}
+	}()
+
+	call, err := c.core.DialInvite(callCtx, inv)
 	if err != nil {
 		c.fail(rec, "no se pudo enviar el INVITE: "+err.Error())
 		return
@@ -177,6 +209,13 @@ func (c *Controller) run(rec *CallRec, holdSeconds int) {
 	})
 	c.log.Info("llamada establecida", "id", rec.ID)
 
+	// Con la llamada contestada, negociamos la media a partir del SDP de respuesta y
+	// arrancamos el RTP. startUACMedia devuelve nil (y cierra el socket) si no se
+	// pudo negociar, dejando la llamada activa pero sin audio.
+	if sess != nil {
+		sess = c.startUACMedia(callCtx, rec, call, sess)
+	}
+
 	// Mantenemos la llamada: hasta holdSeconds, hasta colgado manual o hasta parada.
 	var holdCh <-chan time.Time
 	if holdSeconds > 0 {
@@ -202,6 +241,40 @@ func (c *Controller) run(rec *CallRec, holdSeconds int) {
 		r.EndedAt = now()
 	})
 	c.log.Info("llamada finalizada", "id", rec.ID)
+}
+
+// startUACMedia negocia y arranca la media del lado UAC a partir del SDP de
+// respuesta (200 OK). Si arranca, registra la sesión en el rec (para las métricas)
+// y la devuelve; si no se pudo negociar, la cierra y devuelve nil (la llamada sigue
+// activa pero sin audio).
+func (c *Controller) startUACMedia(ctx context.Context, rec *CallRec, call *sipcore.UACCall, sess *media.Session) *media.Session {
+	answer := call.AnswerSDP()
+	if len(answer) == 0 {
+		c.log.Warn("la respuesta no trae SDP; llamada sin audio", "id", rec.ID)
+		sess.Close()
+		return nil
+	}
+	desc, err := media.Parse(answer)
+	if err != nil {
+		c.log.Warn("SDP de respuesta no parseable; sin audio", "id", rec.ID, "error", err)
+		sess.Close()
+		return nil
+	}
+	pt, ok := media.ChooseCodec(desc)
+	if !ok || desc.Port == 0 {
+		c.log.Warn("respuesta sin códec G.711 o puerto 0; sin audio", "id", rec.ID)
+		sess.Close()
+		return nil
+	}
+	if err := sess.Start(ctx, desc.ConnIP, desc.Port, pt, desc.PTime); err != nil {
+		c.log.Warn("no se pudo iniciar la media (UAC); sin audio", "id", rec.ID, "error", err)
+		sess.Close()
+		return nil
+	}
+	c.update(rec, func(r *CallRec) { r.mediaSess = sess })
+	c.log.Info("media establecida (UAC)", "id", rec.ID,
+		"remote", desc.ConnIP, "port", desc.Port, "codec", media.CodecName(pt))
+	return sess
 }
 
 // SendMessage envía un MESSAGE SIP con los valores dados y registra el resultado.
@@ -371,9 +444,17 @@ func (c *Controller) Snapshot() []CallRec {
 	defer c.mu.RUnlock()
 	out := make([]CallRec, 0, len(c.order))
 	for _, id := range c.order {
-		if rec := c.calls[id]; rec != nil {
-			out = append(out, *rec) // copia por valor (sin el canal interno)
+		rec := c.calls[id]
+		if rec == nil {
+			continue
 		}
+		cp := *rec // copia por valor (sin los campos internos no exportados)
+		// Rellenamos las métricas de media en vivo si la llamada tiene sesión RTP.
+		if rec.mediaSess != nil {
+			m := rec.mediaSess.Metrics()
+			cp.Media = &m
+		}
+		out = append(out, cp)
 	}
 	return out
 }

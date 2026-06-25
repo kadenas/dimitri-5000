@@ -127,6 +127,9 @@ func (a *Agent) Start(parent context.Context) error {
 	ctx, cancel := context.WithCancel(parent)
 	a.cancel = cancel
 
+	// Activamos el plano de media (RTP): las llamadas entrantes se contestan con SDP
+	// y audio G.711, y las salientes (vía control) ofertan media.
+	a.core.EnableMedia()
 	a.core.SetUASPolicy(a.spec.policy())
 	a.ctrl = control.New(ctx, a.core, a.log)
 	// Los MESSAGE entrantes se registran en el control del agente (antes de Serve).
