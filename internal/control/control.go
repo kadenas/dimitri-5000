@@ -98,6 +98,11 @@ type Controller struct {
 	msgs []MessageRec // mensajes SIP enviados y recibidos (orden de aparición)
 
 	scenarios []ScenarioRec // ejecuciones de escenario (orden de aparición)
+
+	// audio es el PCM (8 kHz mono) que las llamadas salientes envían por RTP en vez
+	// del tono. Se reemplaza entero al subir un WAV (nunca se muta in situ), por lo
+	// que cada llamada puede compartir el slice de solo lectura sin carreras.
+	audio []int16
 }
 
 // New crea el controlador. ctx es el contexto de vida de la app (al cancelarse,
@@ -266,6 +271,10 @@ func (c *Controller) startUACMedia(ctx context.Context, rec *CallRec, call *sipc
 		sess.Close()
 		return nil
 	}
+	// Si hay un audio cargado, lo enviamos en bucle en lugar del tono por defecto.
+	if audio := c.audioSnapshot(); len(audio) > 0 {
+		sess.SetSource(media.NewPCMSource(audio))
+	}
 	if err := sess.Start(ctx, desc.ConnIP, desc.Port, pt, desc.PTime); err != nil {
 		c.log.Warn("no se pudo iniciar la media (UAC); sin audio", "id", rec.ID, "error", err)
 		sess.Close()
@@ -385,6 +394,36 @@ func (c *Controller) ScenariosSnapshot() []ScenarioRec {
 	out := make([]ScenarioRec, len(c.scenarios))
 	copy(out, c.scenarios)
 	return out
+}
+
+// SetAudio fija el audio (PCM 8 kHz mono) que enviarán las próximas llamadas
+// salientes en lugar del tono. ClearAudio vuelve al tono.
+func (c *Controller) SetAudio(pcm []int16) {
+	c.mu.Lock()
+	c.audio = pcm
+	c.mu.Unlock()
+}
+
+// ClearAudio descarta el audio cargado (las llamadas vuelven a enviar el tono).
+func (c *Controller) ClearAudio() {
+	c.mu.Lock()
+	c.audio = nil
+	c.mu.Unlock()
+}
+
+// AudioSamples devuelve cuántas muestras de audio hay cargadas (0 = ninguna).
+func (c *Controller) AudioSamples() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.audio)
+}
+
+// audioSnapshot devuelve el slice de audio actual (de solo lectura) para usarlo
+// como fuente RTP de una llamada.
+func (c *Controller) audioSnapshot() []int16 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.audio
 }
 
 // Transfer desvía (REFER) una llamada establecida hacia 'referTo'. Devuelve false

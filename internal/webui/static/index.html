@@ -137,6 +137,21 @@
         </label>
       </div>
       <div class="hint" id="form-hint">0 = mantener hasta colgar a mano. Si rellenas DEST HOST, el INVITE se envía ahí (el SBC) y el To lleva su dominio.</div>
+
+      <!-- Audio enviado por RTP en lugar del tono sintético (Fase 5.2). -->
+      <form id="audio-form" class="panel control audio-ctl">
+        <label class="field">
+          <span>AUDIO&nbsp;AGENT</span>
+          <select id="audio-agent"></select>
+        </label>
+        <label class="field grow">
+          <span>WAV&nbsp;(ideal&nbsp;8&nbsp;kHz&nbsp;mono;&nbsp;se&nbsp;convierte&nbsp;solo)</span>
+          <input type="file" id="audio-file" accept=".wav,audio/wav,audio/x-wav" />
+        </label>
+        <button type="submit" class="btn-mini">UPLOAD ▸</button>
+        <button type="button" id="audio-clear" class="btn-mini danger">CLEAR (TONE)</button>
+        <span id="audio-status" class="audio-status">—</span>
+      </form>
     </section>
 
     <!-- Bloque: llamadas en vivo -->

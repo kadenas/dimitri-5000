@@ -21,6 +21,14 @@ import (
 // llamarse antes de Serve (lo hace el agente al arrancar).
 func (c *Core) EnableMedia() { c.mediaEnabled = true }
 
+// SetMediaAudio fija el audio (PCM 8 kHz mono) que las llamadas ENTRANTES enviarán
+// por RTP en lugar del tono. Un slice nil/vacío vuelve al tono por defecto.
+func (c *Core) SetMediaAudio(pcm []int16) {
+	c.mediaMu.Lock()
+	c.mediaAudio = pcm
+	c.mediaMu.Unlock()
+}
+
 // answerWithMedia intenta contestar un INVITE entrante con audio: parsea la oferta
 // SDP, elige códec, abre la sesión RTP, responde 200 con la respuesta SDP y arranca
 // el envío/recepción. Devuelve true si respondió con media; false si no había oferta
@@ -50,6 +58,14 @@ func (c *Core) answerWithMedia(req *sip.Request, dlg *sipgo.DialogServerSession)
 		return false
 	}
 	answer := media.BuildAnswer(c.bindIP, sess.LocalPort(), pt)
+
+	// Si hay un audio cargado, lo enviamos en bucle en lugar del tono por defecto.
+	c.mediaMu.Lock()
+	audio := c.mediaAudio
+	c.mediaMu.Unlock()
+	if len(audio) > 0 {
+		sess.SetSource(media.NewPCMSource(audio))
+	}
 
 	// Arrancamos la media ANTES de responder: ya conocemos el destino (de la oferta)
 	// y el otro extremo ya escucha en ese puerto. El contexto es de fondo: la sesión

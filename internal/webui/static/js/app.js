@@ -19,6 +19,7 @@ let selectedMsgToAgent = "";      // agente DESTINO del mensaje
 let selectedTrunkAgent = "default"; // agente que monitoriza el trunk a dar de alta
 let selectedScenarioAgent = "default"; // agente que EJECUTA el escenario
 let selectedScenarioFile = "";        // fichero de escenario elegido en el desplegable
+let selectedAudioAgent = "default";   // agente al que se sube el audio (RTP)
 let agentsCache = [];            // última lista de agentes (para resolver destino)
 let selectedCall = "";           // Call-ID elegido en el ladder
 let showOptions = false;         // mostrar diálogos de OPTIONS (keepalive) en el ladder
@@ -221,6 +222,14 @@ function renderAgentSelector(datos) {
     if (!ids.includes(selectedScenarioAgent)) selectedScenarioAgent = ids[0] || "default";
     sc.innerHTML = sel.innerHTML;
     sc.value = selectedScenarioAgent;
+  }
+
+  // Selector del agente al que se sube el audio (mismo origen de agentes).
+  const au = document.getElementById("audio-agent");
+  if (au) {
+    if (!ids.includes(selectedAudioAgent)) selectedAudioAgent = ids[0] || "default";
+    au.innerHTML = sel.innerHTML;
+    au.value = selectedAudioAgent;
   }
 }
 
@@ -503,12 +512,13 @@ function renderScenarioRuns(datos) {
 async function refresh() {
   const conn = document.getElementById("conn");
   try {
-    const [agents, calls, trunks, messages, scenarioRuns] = await Promise.all([
+    const [agents, calls, trunks, messages, scenarioRuns, audio] = await Promise.all([
       fetch("/api/agents").then((r) => r.json()),
       fetch("/api/calls").then((r) => r.json()),
       fetch("/api/trunks").then((r) => r.json()),
       fetch("/api/messages").then((r) => r.json()),
       fetch("/api/scenarios/runs").then((r) => r.json()),
+      fetch("/api/media").then((r) => r.json()),
     ]);
     renderAgents(agents);
     renderAgentSelector(agents);
@@ -516,6 +526,7 @@ async function refresh() {
     renderTrunks(trunks);
     renderMessages(messages);
     renderScenarioRuns(scenarioRuns);
+    renderAudioStatus(audio);
     await refreshTrace();
     conn.textContent = "ONLINE";
     conn.className = "conn ok";
@@ -804,6 +815,75 @@ document.getElementById("scenario-form").addEventListener("submit", async (ev) =
   } catch (e) {
     hint.textContent = "Error: " + e.message;
     hint.className = "hint error";
+  }
+});
+
+// ---- Audio (RTP) ----
+
+// Estado del audio por agente (cacheado para repintar al cambiar de agente).
+let audioCache = [];
+function renderAudioStatus(datos) {
+  audioCache = datos || [];
+  const el = document.getElementById("audio-status");
+  if (!el) return;
+  const a = audioCache.find((x) => x.agent_id === selectedAudioAgent);
+  if (a && a.samples > 0) {
+    el.textContent = "♪ " + a.seconds.toFixed(1) + "s";
+    el.className = "audio-status on";
+  } else {
+    el.textContent = "tono";
+    el.className = "audio-status";
+  }
+}
+
+document.getElementById("audio-agent").addEventListener("change", (ev) => {
+  selectedAudioAgent = ev.target.value;
+  renderAudioStatus(audioCache);
+});
+
+document.getElementById("audio-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const el = document.getElementById("audio-status");
+  const agentId = document.getElementById("audio-agent").value || "default";
+  const fileInput = document.getElementById("audio-file");
+  if (!fileInput.files || fileInput.files.length === 0) {
+    el.textContent = "elige un WAV";
+    el.className = "audio-status err";
+    return;
+  }
+  const fd = new FormData();
+  fd.append("agent_id", agentId);
+  fd.append("file", fileInput.files[0]);
+  try {
+    const res = await fetch("/api/media", { method: "POST", body: fd });
+    if (!res.ok) throw new Error(await res.text());
+    const r = await res.json();
+    el.textContent = "♪ " + r.seconds.toFixed(1) + "s cargados";
+    el.className = "audio-status on";
+    fileInput.value = "";
+    refresh();
+  } catch (e) {
+    el.textContent = "Error: " + e.message;
+    el.className = "audio-status err";
+  }
+});
+
+document.getElementById("audio-clear").addEventListener("click", async () => {
+  const el = document.getElementById("audio-status");
+  const agentId = document.getElementById("audio-agent").value || "default";
+  try {
+    const res = await fetch("/api/media/clear", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent_id: agentId }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    el.textContent = "tono";
+    el.className = "audio-status";
+    refresh();
+  } catch (e) {
+    el.textContent = "Error: " + e.message;
+    el.className = "audio-status err";
   }
 });
 

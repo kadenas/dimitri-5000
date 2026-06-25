@@ -61,6 +61,7 @@ type Core struct {
 	mediaEnabled bool
 	mediaMu      sync.Mutex
 	mediaSess    map[string]*media.Session
+	mediaAudio   []int16 // audio (PCM 8 kHz mono) a enviar en las llamadas entrantes
 }
 
 // Result resume el resultado de un envío de OPTIONS.

@@ -430,3 +430,9 @@ main { padding: 24px 28px 60px; width: 100%; max-width: 1280px; margin: auto; }
 .media b { color: var(--acid); font-weight: 700; }
 .media .m-loss { color: var(--down); font-weight: 700; }
 .muted { color: var(--muted); }
+
+/* Panel de audio (RTP) que se envía en lugar del tono. */
+.audio-ctl { margin-top: 8px; align-items: flex-end; }
+.audio-status { font-family: var(--mono); font-size: 12px; color: var(--muted); align-self: center; }
+.audio-status.on { color: var(--up); }
+.audio-status.err { color: var(--down); }

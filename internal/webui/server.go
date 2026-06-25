@@ -13,6 +13,7 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 	"github.com/kadenas/dimitri-5000/internal/agent"
 	"github.com/kadenas/dimitri-5000/internal/config"
 	"github.com/kadenas/dimitri-5000/internal/control"
+	"github.com/kadenas/dimitri-5000/internal/media"
 	"github.com/kadenas/dimitri-5000/internal/monitor"
 	"github.com/kadenas/dimitri-5000/internal/scenario"
 	"github.com/kadenas/dimitri-5000/internal/sipcore"
@@ -78,6 +80,10 @@ func (s *Server) Run(ctx context.Context) error {
 	// API de mensajería SIP (MESSAGE).
 	mux.HandleFunc("/api/messages", s.handleMessages) // GET: enviados y recibidos
 	mux.HandleFunc("/api/message", s.handleSendMessage) // POST: enviar un MESSAGE
+
+	// API de media: audio (WAV) que el agente envía por RTP en vez del tono.
+	mux.HandleFunc("/api/media", s.handleMedia)            // GET estado | POST subir WAV
+	mux.HandleFunc("/api/media/clear", s.handleMediaClear) // POST {agent_id}: volver al tono
 
 	// API de la traza SIP (diagrama de escalera).
 	mux.HandleFunc("/api/trace/calls", s.handleTraceCalls) // GET: llamadas en la traza
@@ -727,6 +733,103 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	id := ctrl.SendMessage(spec, display)
 	s.writeJSON(w, map[string]string{"id": id})
+}
+
+// --- Media (audio que se envía por RTP) --------------------------------------
+
+// audioView es el estado del audio cargado en un agente.
+type audioView struct {
+	AgentID string  `json:"agent_id"`
+	Samples int     `json:"samples"`
+	Seconds float64 `json:"seconds"`
+}
+
+// handleMedia: GET lista el audio por agente; POST sube un WAV (multipart con
+// 'agent_id' y 'file') que se decodifica a PCM 8 kHz mono y se carga en el agente.
+func (s *Server) handleMedia(w http.ResponseWriter, r *http.Request) {
+	if s.manager == nil {
+		s.writeJSON(w, []any{})
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		out := make([]audioView, 0)
+		for _, info := range s.manager.Snapshot() {
+			a := s.manager.Get(info.ID)
+			if a == nil {
+				continue
+			}
+			n := a.AudioSamples()
+			out = append(out, audioView{AgentID: info.ID, Samples: n, Seconds: secondsOf(n)})
+		}
+		s.writeJSON(w, out)
+	case http.MethodPost:
+		if err := r.ParseMultipartForm(32 << 20); err != nil { // hasta 32 MiB en memoria
+			http.Error(w, "formulario multipart inválido", http.StatusBadRequest)
+			return
+		}
+		agentID := r.FormValue("agent_id")
+		if agentID == "" {
+			agentID = "default"
+		}
+		a := s.manager.Get(agentID)
+		if a == nil {
+			http.Error(w, "agente no encontrado", http.StatusBadRequest)
+			return
+		}
+		file, hdr, err := r.FormFile("file")
+		if err != nil {
+			http.Error(w, "falta el fichero 'file' (un WAV)", http.StatusBadRequest)
+			return
+		}
+		defer file.Close()
+		data, err := io.ReadAll(io.LimitReader(file, 64<<20)) // límite duro 64 MiB
+		if err != nil {
+			http.Error(w, "no se pudo leer el fichero", http.StatusBadRequest)
+			return
+		}
+		pcm, err := media.DecodeWAV(data)
+		if err != nil {
+			http.Error(w, "WAV inválido: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		a.SetAudio(pcm)
+		s.log.Info("audio cargado", "agent", agentID, "file", hdr.Filename, "samples", len(pcm))
+		s.writeJSON(w, audioView{AgentID: agentID, Samples: len(pcm), Seconds: secondsOf(len(pcm))})
+	default:
+		http.Error(w, "usa GET o POST", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleMediaClear descarta el audio de un agente (vuelve a enviar el tono).
+func (s *Server) handleMediaClear(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "usa POST", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.manager == nil {
+		http.Error(w, "gestor de agentes no disponible", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		AgentID string `json:"agent_id"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.AgentID == "" {
+		req.AgentID = "default"
+	}
+	a := s.manager.Get(req.AgentID)
+	if a == nil {
+		http.Error(w, "agente no encontrado", http.StatusNotFound)
+		return
+	}
+	a.ClearAudio()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// secondsOf convierte un nº de muestras a segundos a 8 kHz.
+func secondsOf(samples int) float64 {
+	return float64(samples) / float64(media.SampleRate)
 }
 
 // handleTransfer desvía (REFER) una llamada en curso. Busca el id en todos los

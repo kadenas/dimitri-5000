@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"math"
 	"math/rand/v2"
 	"net"
 	"sync"
@@ -46,8 +45,9 @@ type Session struct {
 	start time.Time // referencia temporal para el cálculo de jitter
 	ssrc  uint32
 
-	pt    uint8 // payload negociado (fijado en Start, leído por los bucles)
-	ptime int   // ms por trama (fijado en Start)
+	pt    uint8  // payload negociado (fijado en Start, leído por los bucles)
+	ptime int    // ms por trama (fijado en Start)
+	src   Source // audio que enviamos (tono por defecto; WAV subido si se fija)
 
 	mu     sync.Mutex
 	remote *net.UDPAddr
@@ -91,11 +91,20 @@ func Open(localIP string, log *slog.Logger) (*Session, error) {
 		local: conn.LocalAddr().(*net.UDPAddr).Port,
 		start: time.Now(),
 		ssrc:  rand.Uint32(),
+		src:   NewToneSource(toneFreq, toneAmp), // por defecto, tono
 	}, nil
 }
 
 // LocalPort devuelve el puerto UDP local donde escucha el RTP (para el SDP).
 func (s *Session) LocalPort() int { return s.local }
+
+// SetSource fija el audio a enviar (p. ej. un WAV subido). Debe llamarse ANTES de
+// Start; si src es nil, se mantiene la fuente por defecto (el tono).
+func (s *Session) SetSource(src Source) {
+	if src != nil {
+		s.src = src
+	}
+}
 
 // Start fija el destino y el códec negociados y lanza los bucles de envío y
 // recepción. ptime<=0 usa 20 ms. Debe llamarse una sola vez, tras negociar el SDP.
@@ -129,24 +138,23 @@ func (s *Session) sendLoop(ctx context.Context) {
 
 	samplesPerFrame := sampleRate * s.ptime / 1000 // 160 muestras para 20 ms
 	encode := encoderFor(s.pt)
-	payload := make([]byte, samplesPerFrame)
+	frame := make([]int16, samplesPerFrame)  // muestras PCM de cada trama
+	payload := make([]byte, samplesPerFrame) // esas muestras codificadas a G.711
 
 	ticker := time.NewTicker(time.Duration(s.ptime) * time.Millisecond)
 	defer ticker.Stop()
 
 	seq := uint16(rand.Uint32())
 	ts := rand.Uint32()
-	var n uint64 // índice de muestra global, para que el tono sea continuo
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			s.src.NextFrame(frame)
 			for i := 0; i < samplesPerFrame; i++ {
-				sample := int16(toneAmp * math.Sin(2*math.Pi*toneFreq*float64(n)/sampleRate))
-				payload[i] = encode(sample)
-				n++
+				payload[i] = encode(frame[i])
 			}
 			h := Header{PayloadType: s.pt, SequenceNumber: seq, Timestamp: ts, SSRC: s.ssrc}
 			pkt := append(h.Marshal(), payload...)

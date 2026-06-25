@@ -76,6 +76,8 @@ type Agent struct {
 
 	trunks []config.Target  // trunks remotos asignados (persisten entre stop/start)
 	mon    *monitor.Monitor // faro de ESTE agente; existe mientras está running
+
+	audio []int16 // audio (PCM 8 kHz mono) a enviar por RTP; persiste entre stop/start
 }
 
 // newAgent crea el objeto agente en estado "stopped" (sin tocar la red). Si core
@@ -134,6 +136,11 @@ func (a *Agent) Start(parent context.Context) error {
 	a.ctrl = control.New(ctx, a.core, a.log)
 	// Los MESSAGE entrantes se registran en el control del agente (antes de Serve).
 	a.core.SetMessageHandler(a.ctrl.RecordIncomingMessage)
+	// Reaplicamos el audio cargado (persiste entre paradas) a este control y core.
+	if a.audio != nil {
+		a.ctrl.SetAudio(a.audio)
+		a.core.SetMediaAudio(a.audio)
+	}
 
 	addr := net.JoinHostPort(a.spec.BindIP, strconv.Itoa(a.spec.SIPPort))
 	go func() {
@@ -236,6 +243,41 @@ func (a *Agent) Control() *control.Controller {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.ctrl
+}
+
+// SetAudio fija el audio (PCM 8 kHz mono) que este agente enviará por RTP, tanto en
+// llamadas salientes como entrantes. Persiste entre paradas y se aplica en caliente
+// si el agente está corriendo.
+func (a *Agent) SetAudio(pcm []int16) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.audio = pcm
+	if a.ctrl != nil {
+		a.ctrl.SetAudio(pcm)
+	}
+	if a.core != nil {
+		a.core.SetMediaAudio(pcm)
+	}
+}
+
+// ClearAudio descarta el audio del agente (las llamadas vuelven al tono).
+func (a *Agent) ClearAudio() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.audio = nil
+	if a.ctrl != nil {
+		a.ctrl.ClearAudio()
+	}
+	if a.core != nil {
+		a.core.SetMediaAudio(nil)
+	}
+}
+
+// AudioSamples devuelve cuántas muestras de audio tiene cargadas el agente (0 = tono).
+func (a *Agent) AudioSamples() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.audio)
 }
 
 // Core devuelve el núcleo SIP del agente (nil si está parado y no adoptado).
