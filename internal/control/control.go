@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kadenas/dimitri-5000/internal/load"
 	"github.com/kadenas/dimitri-5000/internal/media"
 	"github.com/kadenas/dimitri-5000/internal/runner"
 	"github.com/kadenas/dimitri-5000/internal/scenario"
@@ -64,24 +65,24 @@ type CallRec struct {
 // MessageRec es el registro de un MESSAGE (enviado o recibido) para mostrarlo.
 type MessageRec struct {
 	ID        string `json:"id"`
-	Dir       string `json:"dir"`        // "out" (enviado) | "in" (recibido)
-	Peer      string `json:"peer"`       // a quién/de quién (To si out, From si in)
-	Body      string `json:"body"`       // texto del mensaje
-	Code      int    `json:"code"`       // código de respuesta (solo out)
-	Reason    string `json:"reason"`     // razón de la respuesta (solo out)
+	Dir       string `json:"dir"`    // "out" (enviado) | "in" (recibido)
+	Peer      string `json:"peer"`   // a quién/de quién (To si out, From si in)
+	Body      string `json:"body"`   // texto del mensaje
+	Code      int    `json:"code"`   // código de respuesta (solo out)
+	Reason    string `json:"reason"` // razón de la respuesta (solo out)
 	Error     string `json:"error,omitempty"`
-	Timestamp string `json:"timestamp"`  // hora del evento
+	Timestamp string `json:"timestamp"` // hora del evento
 }
 
 // ScenarioRec es la foto de una ejecución de escenario para mostrarla en la web.
 type ScenarioRec struct {
 	ID        string `json:"id"`
-	Name      string `json:"name"`             // 'name' del escenario ejecutado
-	File      string `json:"file"`             // fichero YAML de origen
-	Target    string `json:"target"`           // destino contra el que se ejecutó
-	State     string `json:"state"`            // running | ok | failed
-	Error     string `json:"error,omitempty"`  // motivo si falló
-	StartedAt string `json:"started_at"`       // hora de inicio
+	Name      string `json:"name"`               // 'name' del escenario ejecutado
+	File      string `json:"file"`               // fichero YAML de origen
+	Target    string `json:"target"`             // destino contra el que se ejecutó
+	State     string `json:"state"`              // running | ok | failed
+	Error     string `json:"error,omitempty"`    // motivo si falló
+	StartedAt string `json:"started_at"`         // hora de inicio
 	EndedAt   string `json:"ended_at,omitempty"` // hora de fin (vacío mientras corre)
 }
 
@@ -103,6 +104,9 @@ type Controller struct {
 	// del tono. Se reemplaza entero al subir un WAV (nunca se muta in situ), por lo
 	// que cada llamada puede compartir el slice de solo lectura sin carreras.
 	audio []int16
+
+	// loadGen es el motor de pruebas de carga de este agente (una ejecución a la vez).
+	loadGen *load.Generator
 }
 
 // New crea el controlador. ctx es el contexto de vida de la app (al cancelarse,
@@ -112,10 +116,11 @@ func New(ctx context.Context, core *sipcore.Core, log *slog.Logger) *Controller 
 		log = slog.Default()
 	}
 	return &Controller{
-		core:  core,
-		log:   log,
-		ctx:   ctx,
-		calls: make(map[string]*CallRec),
+		core:    core,
+		log:     log,
+		ctx:     ctx,
+		calls:   make(map[string]*CallRec),
+		loadGen: load.New(core, log),
 	}
 }
 
@@ -425,6 +430,24 @@ func (c *Controller) audioSnapshot() []int16 {
 	defer c.mu.RUnlock()
 	return c.audio
 }
+
+// --- Pruebas de carga --------------------------------------------------------
+
+// StartLoad arranca una prueba de carga sobre el Core de este agente. Si la prueba
+// pide media y no trae audio propio, reutiliza el WAV cargado en el agente (si lo
+// hay); así la carga envía el mismo audio que las llamadas manuales.
+func (c *Controller) StartLoad(spec load.Spec) error {
+	if spec.WithMedia && spec.Audio == nil {
+		spec.Audio = c.audioSnapshot()
+	}
+	return c.loadGen.Start(c.ctx, spec)
+}
+
+// StopLoad detiene la prueba de carga en curso (cuelga todas las llamadas con BYE).
+func (c *Controller) StopLoad() { c.loadGen.Stop() }
+
+// LoadStats devuelve la foto agregada de la prueba de carga (Running=false si no hay).
+func (c *Controller) LoadStats() load.Stats { return c.loadGen.Snapshot() }
 
 // Transfer desvía (REFER) una llamada establecida hacia 'referTo'. Devuelve false
 // si no existe la llamada; el resultado del REFER se refleja en LastCode/LastReason.

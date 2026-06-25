@@ -12,13 +12,17 @@
     <div class="wordmark">
       <span class="dim">DIMITRI</span><span class="slash">//</span><span class="num">5000</span>
     </div>
-    <div class="sub">SIP&nbsp;TEST&nbsp;SYSTEM · v0.13</div>
+    <div class="sub">SIP&nbsp;TEST&nbsp;SYSTEM · v0.14</div>
     <div class="sysline" id="sysline">
       <span id="clock">--:--:--</span>
     </div>
   </header>
 
   <main>
+    <!-- IPv4 locales detectadas (relleno por /api/netinfo): sugieren el BIND IP
+         y el DEST HOST sin teclear. Compartida por varios campos vía list=. -->
+    <datalist id="local-ips"></datalist>
+
     <!-- Bloque: agentes (instancias SIP) -->
     <section class="block">
       <h2 class="block-title"><span class="idx">01</span> AGENTS</h2>
@@ -46,7 +50,8 @@
         </label>
         <label class="field">
           <span>BIND&nbsp;IP</span>
-          <input type="text" id="ag-ip" placeholder="192.168.0.128" autocomplete="off" />
+          <input type="text" id="ag-ip" placeholder="192.168.0.128" autocomplete="off"
+                 list="local-ips" />
         </label>
         <label class="field">
           <span>PORT</span>
@@ -90,8 +95,9 @@
                  placeholder="sip:192.168.1.10:5060" autocomplete="off" />
         </label>
         <label class="field">
-          <span>HOLD&nbsp;(s)</span>
-          <input type="number" id="hold" name="hold" value="10" min="0" />
+          <span>HOLD&nbsp;(s · 0=∞)</span>
+          <input type="number" id="hold" name="hold" value="0" min="0"
+                 title="0 = la llamada se mantiene hasta que se cuelgue con BYE (HANGUP) o un extremo la termine" />
         </label>
         <button type="submit" class="btn-dial">DIAL ▸</button>
       </form>
@@ -101,7 +107,8 @@
       <div id="adv" class="panel control adv hidden">
         <label class="field">
           <span>DEST&nbsp;HOST&nbsp;(SBC)</span>
-          <input type="text" id="dest-host" placeholder="ip del SBC" autocomplete="off" />
+          <input type="text" id="dest-host" placeholder="ip del SBC" autocomplete="off"
+                 list="local-ips" />
         </label>
         <label class="field">
           <span>DEST&nbsp;PORT</span>
@@ -136,7 +143,7 @@
           <textarea id="headers" rows="2" placeholder="Diversion: <sip:300@pbx.local>"></textarea>
         </label>
       </div>
-      <div class="hint" id="form-hint">0 = mantener hasta colgar a mano. Si rellenas DEST HOST, el INVITE se envía ahí (el SBC) y el To lleva su dominio.</div>
+      <div class="hint" id="form-hint">HOLD 0 (por defecto) = la llamada se mantiene levantada con RTP hasta que la cuelgues con HANGUP (BYE) o un extremo la termine. Si rellenas DEST HOST, el INVITE se envía ahí (el SBC) y el To lleva su dominio.</div>
 
       <!-- Audio enviado por RTP en lugar del tono sintético (Fase 5.2). -->
       <form id="audio-form" class="panel control audio-ctl">
@@ -341,6 +348,46 @@
           <tr class="empty"><td colspan="7">NO RUNS</td></tr>
         </tbody>
       </table>
+    </section>
+    <!-- Bloque: pruebas de carga (Fase 3) -->
+    <section class="block">
+      <h2 class="block-title"><span class="idx">08</span> LOAD&nbsp;TEST</h2>
+      <form id="load-form" class="panel control">
+        <label class="field">
+          <span>FROM&nbsp;AGENT</span>
+          <select id="load-agent"></select>
+        </label>
+        <label class="field">
+          <span>TO&nbsp;AGENT</span>
+          <select id="load-to-agent"></select>
+        </label>
+        <label class="field grow">
+          <span>TARGET&nbsp;URI&nbsp;(manual)</span>
+          <input type="text" id="load-to" placeholder="sip:192.168.1.10:5060" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>CONCURRENT&nbsp;(N)</span>
+          <input type="number" id="load-n" value="50" min="1" />
+        </label>
+        <label class="field">
+          <span>CPS</span>
+          <input type="number" id="load-cps" value="10" min="1" step="1" />
+        </label>
+        <label class="field">
+          <span>MAX&nbsp;(0=∞)</span>
+          <input type="number" id="load-max" value="0" min="0" />
+        </label>
+        <label class="field check">
+          <span>MEDIA</span>
+          <input type="checkbox" id="load-media" checked />
+        </label>
+        <button type="submit" class="btn-dial" id="load-start">START ▸</button>
+        <button type="button" class="btn-mini danger" id="load-stop">STOP</button>
+      </form>
+      <div class="hint" id="load-hint">Sostiene N llamadas simultáneas con RTP; la CPS regula la subida y la reposición de las que caen. STOP las cuelga todas con BYE.</div>
+
+      <!-- Panel de métricas agregadas (en vivo) -->
+      <div id="load-stats" class="load-stats"></div>
     </section>
   </main>
 

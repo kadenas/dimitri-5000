@@ -100,8 +100,8 @@ func SplitURI(uri string) (host string, port int, user string, err error) {
 // SBC), pero el To puede llevar otro dominio. El SBC enruta por el número y
 // entrega la llamada a su destino real (p. ej. otro agente nuestro).
 type RichInvite struct {
-	DestHost string // a dónde se envía de verdad el INVITE (SBC o peer). Host del Request-URI
-	DestPort int    // puerto del destino real
+	DestHost  string // a dónde se envía de verdad el INVITE (SBC o peer). Host del Request-URI
+	DestPort  int    // puerto del destino real
 	Transport string // "udp"|"tcp" (vacío = udp)
 
 	FromUser    string // número/usuario origen
@@ -215,6 +215,14 @@ func (call *UACCall) AnswerSDP() []byte {
 // Hangup cuelga la llamada enviando BYE y espera el 200 de confirmación.
 func (call *UACCall) Hangup(ctx context.Context) error {
 	return call.session.Bye(ctx)
+}
+
+// Done devuelve un canal que se cierra cuando el diálogo TERMINA: lo normal es un
+// BYE remoto (el otro extremo cuelga) o cualquier otra terminación. sipgo cancela
+// el contexto del diálogo al pasar a estado Ended, así que esto avisa "en caliente"
+// sin sondear. Lo usa el motor de carga para reponer las llamadas que se caen.
+func (call *UACCall) Done() <-chan struct{} {
+	return call.session.Context().Done()
 }
 
 // Refer envía un REFER dentro del diálogo para DESVIAR la llamada (transferencia

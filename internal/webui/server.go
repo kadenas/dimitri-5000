@@ -18,13 +18,16 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/kadenas/dimitri-5000/internal/agent"
 	"github.com/kadenas/dimitri-5000/internal/config"
 	"github.com/kadenas/dimitri-5000/internal/control"
+	"github.com/kadenas/dimitri-5000/internal/load"
 	"github.com/kadenas/dimitri-5000/internal/media"
 	"github.com/kadenas/dimitri-5000/internal/monitor"
+	"github.com/kadenas/dimitri-5000/internal/netutil"
 	"github.com/kadenas/dimitri-5000/internal/scenario"
 	"github.com/kadenas/dimitri-5000/internal/sipcore"
 	"github.com/kadenas/dimitri-5000/internal/trace"
@@ -61,6 +64,9 @@ func (s *Server) Run(ctx context.Context) error {
 	// API: estado de troncales del faro global (modo monitor legacy).
 	mux.HandleFunc("/api/status", s.handleStatus)
 
+	// API: información de red local (IPs detectadas) para sugerir el BIND IP.
+	mux.HandleFunc("/api/netinfo", s.handleNetInfo) // GET: {local_ip, ips}
+
 	// API de trunks por agente (modo web): lista global + alta/baja.
 	mux.HandleFunc("/api/trunks", s.handleTrunks)             // GET lista | POST alta
 	mux.HandleFunc("/api/trunks/remove", s.handleTrunkRemove) // POST {agent_id, id}
@@ -72,13 +78,13 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/agents/remove", s.handleAgentRemove) // POST {id}
 
 	// API de control de llamadas (por agente).
-	mux.HandleFunc("/api/calls", s.handleCalls)        // GET: estado de las llamadas
-	mux.HandleFunc("/api/call", s.handlePlaceCall)     // POST: lanzar una llamada
+	mux.HandleFunc("/api/calls", s.handleCalls)            // GET: estado de las llamadas
+	mux.HandleFunc("/api/call", s.handlePlaceCall)         // POST: lanzar una llamada
 	mux.HandleFunc("/api/call/hangup", s.handleHangup)     // POST: colgar una llamada
 	mux.HandleFunc("/api/call/transfer", s.handleTransfer) // POST: desviar (REFER)
 
 	// API de mensajería SIP (MESSAGE).
-	mux.HandleFunc("/api/messages", s.handleMessages) // GET: enviados y recibidos
+	mux.HandleFunc("/api/messages", s.handleMessages)   // GET: enviados y recibidos
 	mux.HandleFunc("/api/message", s.handleSendMessage) // POST: enviar un MESSAGE
 
 	// API de media: audio (WAV) que el agente envía por RTP en vez del tono.
@@ -89,6 +95,11 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/trace/calls", s.handleTraceCalls) // GET: llamadas en la traza
 	mux.HandleFunc("/api/trace/clear", s.handleTraceClear) // POST: vaciar la traza
 	mux.HandleFunc("/api/trace", s.handleTrace)            // GET ?call_id=: eventos
+
+	// API de pruebas de carga (Fase 3): arrancar/parar y stats agregadas por agente.
+	mux.HandleFunc("/api/load", s.handleLoad)            // GET: stats por agente
+	mux.HandleFunc("/api/load/start", s.handleLoadStart) // POST: arrancar carga
+	mux.HandleFunc("/api/load/stop", s.handleLoadStop)   // POST {agent_id}: parar carga
 
 	// API de escenarios (Fase 2 en la web).
 	mux.HandleFunc("/api/scenarios", s.handleScenarios)         // GET: disponibles en disco
@@ -150,6 +161,32 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, s.monitor.Snapshot())
+}
+
+// netIP describe una IPv4 local detectada: la dirección a secas (para volcarla en
+// un campo) y una etiqueta legible con la interfaz (para mostrarla en la lista).
+type netIP struct {
+	IP    string `json:"ip"`
+	Label string `json:"label"`
+}
+
+// handleNetInfo devuelve la IP local principal (la que el sistema usaría para
+// salir) y todas las IPv4 detectadas, para que la web pueda SUGERIR el BIND IP
+// sin que el usuario tenga que teclearlo ni conocerlo de memoria.
+func (s *Server) handleNetInfo(w http.ResponseWriter, r *http.Request) {
+	local, _ := netutil.LocalIP() // "" si no se pudo determinar; la web lo tolera
+
+	ips := make([]netIP, 0)
+	for _, entry := range netutil.ListIPv4() {
+		// ListIPv4 devuelve "192.168.0.137 (eth0)": separamos IP y etiqueta.
+		ip := entry
+		if i := strings.IndexByte(entry, ' '); i > 0 {
+			ip = entry[:i]
+		}
+		ips = append(ips, netIP{IP: ip, Label: entry})
+	}
+
+	s.writeJSON(w, map[string]any{"local_ip": local, "ips": ips})
 }
 
 // --- Trunks por agente -------------------------------------------------------
@@ -494,6 +531,118 @@ func buildCallSpec(req placeCallReq) (control.CallSpec, error) {
 	return control.CallSpec{Invite: inv, Hold: req.Hold, Display: display}, nil
 }
 
+// --- Pruebas de carga (Fase 3) -----------------------------------------------
+
+// loadReq es el cuerpo JSON para arrancar una prueba de carga. El destino sigue el
+// MISMO modelo que PLACE CALL (URI simple o valores enriquecidos hacia un SBC).
+type loadReq struct {
+	AgentID    string  `json:"agent_id"`   // qué agente origina la carga
+	Concurrent int     `json:"concurrent"` // N llamadas simultáneas a sostener
+	CPS        float64 `json:"cps"`        // ritmo de lanzamiento/reposición (llamadas/seg)
+	MaxCalls   int64   `json:"max_calls"`  // tope total de INVITEs (0 = sin tope)
+	WithMedia  bool    `json:"with_media"` // enviar RTP en cada llamada
+
+	// Destino (igual que PLACE CALL).
+	To         string            `json:"to"`
+	DestHost   string            `json:"dest_host"`
+	DestPort   int               `json:"dest_port"`
+	FromUser   string            `json:"from_user"`
+	FromDomain string            `json:"from_domain"`
+	ToUser     string            `json:"to_user"`
+	ToDomain   string            `json:"to_domain"`
+	PaiUser    string            `json:"pai_user"`
+	Headers    map[string]string `json:"headers"`
+}
+
+// loadView etiqueta las stats de carga con el agente que las origina.
+type loadView struct {
+	AgentID string `json:"agent_id"`
+	load.Stats
+}
+
+// handleLoad: GET con las stats de carga de cada agente (running o no).
+func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
+	out := make([]loadView, 0)
+	if s.manager != nil {
+		for _, info := range s.manager.Snapshot() {
+			a := s.manager.Get(info.ID)
+			if a == nil {
+				continue
+			}
+			ctrl := a.Control()
+			if ctrl == nil {
+				continue
+			}
+			out = append(out, loadView{AgentID: info.ID, Stats: ctrl.LoadStats()})
+		}
+	}
+	s.writeJSON(w, out)
+}
+
+// handleLoadStart arranca una prueba de carga en el agente indicado.
+func (s *Server) handleLoadStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req loadReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "JSON inválido", http.StatusBadRequest)
+		return
+	}
+	ctrl := s.controlFor(req.AgentID)
+	if ctrl == nil {
+		http.Error(w, "agente no disponible o parado", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Reutilizamos buildCallSpec para fabricar el INVITE (mismo modelo que PLACE CALL).
+	cs, err := buildCallSpec(placeCallReq{
+		To: req.To, DestHost: req.DestHost, DestPort: req.DestPort,
+		FromUser: req.FromUser, FromDomain: req.FromDomain,
+		ToUser: req.ToUser, ToDomain: req.ToDomain, PaiUser: req.PaiUser, Headers: req.Headers,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	spec := load.Spec{
+		Invite:     cs.Invite,
+		Concurrent: req.Concurrent,
+		CPS:        req.CPS,
+		MaxCalls:   req.MaxCalls,
+		WithMedia:  req.WithMedia,
+	}
+	if err := ctrl.StartLoad(spec); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.writeJSON(w, map[string]string{"status": "started"})
+}
+
+// handleLoadStop detiene la prueba de carga del agente indicado.
+func (s *Server) handleLoadStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		AgentID string `json:"agent_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "JSON inválido", http.StatusBadRequest)
+		return
+	}
+	ctrl := s.controlFor(req.AgentID)
+	if ctrl == nil {
+		http.Error(w, "agente no disponible o parado", http.StatusServiceUnavailable)
+		return
+	}
+	ctrl.StopLoad()
+	s.writeJSON(w, map[string]string{"status": "stopping"})
+}
+
 // --- Traza SIP (ladder) ------------------------------------------------------
 
 // handleTraceCalls devuelve el resumen de llamadas presentes en la traza.
@@ -655,17 +804,17 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 // sendMessageReq es el cuerpo JSON para enviar un MESSAGE.
 type sendMessageReq struct {
-	AgentID  string            `json:"agent_id"`
-	To       string            `json:"to"`        // modo simple: URI completa
-	DestHost string            `json:"dest_host"` // modo enriquecido
-	DestPort int               `json:"dest_port"`
-	FromUser string            `json:"from_user"`
-	FromDomain string          `json:"from_domain"`
-	FromDisplay string         `json:"from_display"`
-	ToUser   string            `json:"to_user"`
-	ToDomain string            `json:"to_domain"`
-	Body     string            `json:"body"`
-	Headers  map[string]string `json:"headers"`
+	AgentID     string            `json:"agent_id"`
+	To          string            `json:"to"`        // modo simple: URI completa
+	DestHost    string            `json:"dest_host"` // modo enriquecido
+	DestPort    int               `json:"dest_port"`
+	FromUser    string            `json:"from_user"`
+	FromDomain  string            `json:"from_domain"`
+	FromDisplay string            `json:"from_display"`
+	ToUser      string            `json:"to_user"`
+	ToDomain    string            `json:"to_domain"`
+	Body        string            `json:"body"`
+	Headers     map[string]string `json:"headers"`
 }
 
 // handleSendMessage envía un MESSAGE desde el agente indicado.

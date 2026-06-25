@@ -20,6 +20,8 @@ let selectedTrunkAgent = "default"; // agente que monitoriza el trunk a dar de a
 let selectedScenarioAgent = "default"; // agente que EJECUTA el escenario
 let selectedScenarioFile = "";        // fichero de escenario elegido en el desplegable
 let selectedAudioAgent = "default";   // agente al que se sube el audio (RTP)
+let selectedLoadAgent = "default";    // agente que ORIGINA la prueba de carga
+let selectedLoadToAgent = "";         // agente DESTINO de la carga ("" = manual)
 let agentsCache = [];            // última lista de agentes (para resolver destino)
 let selectedCall = "";           // Call-ID elegido en el ladder
 let showOptions = false;         // mostrar diálogos de OPTIONS (keepalive) en el ladder
@@ -231,6 +233,16 @@ function renderAgentSelector(datos) {
     au.innerHTML = sel.innerHTML;
     au.value = selectedAudioAgent;
   }
+
+  // Selector del agente que ORIGINA la carga (mismo origen de agentes).
+  const lo = document.getElementById("load-agent");
+  if (lo) {
+    if (!ids.includes(selectedLoadAgent)) selectedLoadAgent = ids[0] || "default";
+    lo.innerHTML = sel.innerHTML;
+    lo.value = selectedLoadAgent;
+  }
+  // Selector del agente DESTINO de la carga (con opción manual).
+  fillDestSelect("load-to-agent", selectedLoadToAgent);
 }
 
 // fillDestSelect rellena un desplegable de agente DESTINO (con opción manual).
@@ -512,13 +524,14 @@ function renderScenarioRuns(datos) {
 async function refresh() {
   const conn = document.getElementById("conn");
   try {
-    const [agents, calls, trunks, messages, scenarioRuns, audio] = await Promise.all([
+    const [agents, calls, trunks, messages, scenarioRuns, audio, loadStats] = await Promise.all([
       fetch("/api/agents").then((r) => r.json()),
       fetch("/api/calls").then((r) => r.json()),
       fetch("/api/trunks").then((r) => r.json()),
       fetch("/api/messages").then((r) => r.json()),
       fetch("/api/scenarios/runs").then((r) => r.json()),
       fetch("/api/media").then((r) => r.json()),
+      fetch("/api/load").then((r) => r.json()),
     ]);
     renderAgents(agents);
     renderAgentSelector(agents);
@@ -527,6 +540,7 @@ async function refresh() {
     renderMessages(messages);
     renderScenarioRuns(scenarioRuns);
     renderAudioStatus(audio);
+    renderLoad(loadStats);
     await refreshTrace();
     conn.textContent = "ONLINE";
     conn.className = "conn ok";
@@ -549,9 +563,12 @@ document.getElementById("call-agent").addEventListener("change", (ev) => {
   selectedAgent = ev.target.value;
 });
 
-// Recordar el agente destino elegido al cambiarlo.
+// Recordar el agente destino elegido al cambiarlo y, de paso, volcar su IP:puerto
+// al campo TARGET URI (visible y editable) para no teclearlo a mano.
 document.getElementById("to-agent").addEventListener("change", (ev) => {
   selectedToAgent = ev.target.value;
+  const a = agentsCache.find((x) => x.id === selectedToAgent);
+  if (a) document.getElementById("to").value = "sip:" + a.bind_ip + ":" + a.sip_port;
 });
 
 // Selectores del panel de mensajes.
@@ -887,6 +904,145 @@ document.getElementById("audio-clear").addEventListener("click", async () => {
   }
 });
 
+// Carga las IPv4 locales detectadas: rellena el datalist (sugerencias al teclear
+// en BIND IP / DEST HOST) y, si el campo BIND IP del alta de agente está vacío, lo
+// pre-rellena con la IP principal de la máquina. Así el usuario no la teclea.
+async function loadNetInfo() {
+  try {
+    const info = await fetch("/api/netinfo").then((r) => r.json());
+    const dl = document.getElementById("local-ips");
+    if (dl) {
+      dl.innerHTML = (info.ips || [])
+        .map((x) => '<option value="' + esc(x.ip) + '">' + esc(x.label) + "</option>")
+        .join("");
+    }
+    const agIp = document.getElementById("ag-ip");
+    if (agIp && !agIp.value && info.local_ip) agIp.value = info.local_ip;
+  } catch (e) {
+    /* sin red detectable: la web sigue funcionando, solo sin sugerencias */
+  }
+}
+
+// ---- Pruebas de carga (Fase 3) ----
+
+// Última foto de stats de carga por agente (para repintar al cambiar de agente).
+let loadCache = [];
+
+// Pinta las métricas agregadas de la carga del agente seleccionado.
+function renderLoad(datos) {
+  loadCache = datos || [];
+  const el = document.getElementById("load-stats");
+  if (!el) return;
+  const s = loadCache.find((x) => x.agent_id === selectedLoadAgent);
+  if (!s || !s.running) {
+    el.innerHTML = '<span class="load-idle">IDLE — sin prueba de carga en curso</span>';
+    return;
+  }
+  const state = s.stopping
+    ? '<span class="badge s-failed">STOPPING</span>'
+    : '<span class="badge s-up">RUNNING</span>';
+  const chip = (label, value, cls) =>
+    '<div class="load-chip' + (cls ? " " + cls : "") + '"><span class="lc-l">' +
+    label + '</span><span class="lc-v">' + value + "</span></div>";
+
+  let html = '<div class="load-row">' + state +
+    chip("TARGET", s.target) +
+    chip("ACTIVE", s.active, s.active >= s.target ? "ok" : "") +
+    chip("PENDING", s.pending) +
+    chip("CPS", s.cps) +
+    "</div>" +
+    '<div class="load-row">' +
+    chip("LAUNCHED", s.launched) +
+    chip("ESTABLISHED", s.established) +
+    chip("FAILED", s.failed, s.failed > 0 ? "bad" : "") +
+    chip("ENDED", s.ended) +
+    "</div>";
+  if (s.with_media) {
+    html += '<div class="load-row">' +
+      chip("RTP &uarr; pkts", s.tx_packets) +
+      chip("RTP &darr; pkts", s.rx_packets) +
+      chip("LOST", s.lost, s.lost > 0 ? "bad" : "") +
+      "</div>";
+  }
+  el.innerHTML = html;
+}
+
+document.getElementById("load-agent").addEventListener("change", (ev) => {
+  selectedLoadAgent = ev.target.value;
+  renderLoad(loadCache);
+});
+
+// Al elegir un agente destino, volcamos su IP:puerto al TARGET URI (visible).
+document.getElementById("load-to-agent").addEventListener("change", (ev) => {
+  selectedLoadToAgent = ev.target.value;
+  const a = agentsCache.find((x) => x.id === selectedLoadToAgent);
+  if (a) document.getElementById("load-to").value = "sip:" + a.bind_ip + ":" + a.sip_port;
+});
+
+document.getElementById("load-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const hint = document.getElementById("load-hint");
+  const agentId = document.getElementById("load-agent").value || "default";
+  const toAgentId = document.getElementById("load-to-agent").value;
+  const to = val("load-to");
+
+  let destHost = "";
+  let destPort = 0;
+  const toAgent = agentsCache.find((a) => a.id === toAgentId);
+  if (toAgent) {
+    destHost = toAgent.bind_ip;
+    destPort = toAgent.sip_port;
+  }
+  if (!toAgent && !to) {
+    hint.textContent = "Elige un TO AGENT o indica un TARGET URI.";
+    hint.className = "hint error";
+    return;
+  }
+
+  const payload = {
+    agent_id: agentId,
+    concurrent: parseInt(val("load-n"), 10) || 0,
+    cps: parseFloat(val("load-cps")) || 0,
+    max_calls: parseInt(val("load-max"), 10) || 0,
+    with_media: document.getElementById("load-media").checked,
+    to: toAgent ? "" : to,
+    dest_host: destHost,
+    dest_port: destPort,
+  };
+
+  try {
+    const res = await fetch("/api/load/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    hint.textContent = "Carga arrancada (" + agentId + ").";
+    hint.className = "hint";
+    refresh();
+  } catch (e) {
+    hint.textContent = "Error: " + e.message;
+    hint.className = "hint error";
+  }
+});
+
+document.getElementById("load-stop").addEventListener("click", async () => {
+  const agentId = document.getElementById("load-agent").value || "default";
+  try {
+    await fetch("/api/load/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent_id: agentId }),
+    });
+    document.getElementById("load-hint").textContent = "STOP enviado: colgando las llamadas…";
+    document.getElementById("load-hint").className = "hint";
+    refresh();
+  } catch (e) {
+    /* el siguiente refresco reflejará el estado */
+  }
+});
+
+loadNetInfo();   // IPs locales para sugerir BIND IP / DEST HOST
 loadScenarios(); // lista inicial de escenarios disponibles en disco
 
 tickClock();
