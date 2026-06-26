@@ -22,12 +22,15 @@ package load
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/kadenas/dimitri-5000/internal/media"
+	"github.com/kadenas/dimitri-5000/internal/runner"
+	"github.com/kadenas/dimitri-5000/internal/scenario"
 	"github.com/kadenas/dimitri-5000/internal/sipcore"
 )
 
@@ -39,6 +42,7 @@ type Spec struct {
 	MaxCalls   int64              // tope total de INVITEs (0 = sin tope: reposición indefinida)
 	Audio      []int16            // PCM 8 kHz mono a enviar por RTP (nil = tono sintético)
 	WithMedia  bool               // abrir RTP por llamada (false = solo señalización)
+	Scenario   *scenario.Scenario // si != nil, cada llamada ejecuta este escenario UAC (señalización) en vez del INVITE básico
 }
 
 // Stats es la foto agregada de una prueba de carga (viaja a la web como JSON).
@@ -49,6 +53,7 @@ type Stats struct {
 	CPS         float64 `json:"cps"`         // ritmo configurado
 	MaxCalls    int64   `json:"max_calls"`   // tope total (0 = sin tope)
 	WithMedia   bool    `json:"with_media"`  // si se envía RTP
+	Scenario    string  `json:"scenario,omitempty"` // nombre del escenario por llamada (vacío = INVITE básico)
 	Launched    int64   `json:"launched"`    // INVITEs enviados (acumulado)
 	Active      int64   `json:"active"`      // establecidas vivas AHORA
 	Pending     int64   `json:"pending"`     // en curso (dialing/ringing) AHORA
@@ -193,6 +198,11 @@ func (g *Generator) Snapshot() Stats {
 	}
 	r.sessMu.Unlock()
 
+	scName := ""
+	if r.spec.Scenario != nil {
+		scName = r.spec.Scenario.Name
+	}
+
 	return Stats{
 		Running:     true,
 		Stopping:    r.stopping.Load(),
@@ -200,6 +210,7 @@ func (g *Generator) Snapshot() Stats {
 		CPS:         r.spec.CPS,
 		MaxCalls:    r.spec.MaxCalls,
 		WithMedia:   r.spec.WithMedia,
+		Scenario:    scName,
 		Launched:    r.launched.Load(),
 		Active:      r.active.Load(),
 		Pending:     r.pending.Load(),
@@ -255,44 +266,66 @@ func (g *Generator) worker(ctx context.Context, r *run) {
 	r.launched.Add(1)
 	r.pending.Add(1)
 
-	// Plano de media (RTP): abrimos el socket y ofertamos G.711 en el INVITE.
-	// Trabajamos sobre una COPIA de la plantilla para no mutar la Spec compartida.
-	inv := r.spec.Invite
+	// Plano de media (RTP): abrimos el socket y preparamos la oferta SDP (con el
+	// puerto RTP real) que irá en el INVITE, tanto para el INVITE básico como para
+	// el escenario (donde sustituye al body que el YAML pudiera definir).
 	var sess *media.Session
+	var mediaHdr map[string]string
+	var mediaBody []byte
 	if r.spec.WithMedia {
 		if s, err := media.Open(g.core.LocalIP(), g.log); err != nil {
 			g.log.Debug("carga: no se pudo abrir RTP; llamada sin audio", "error", err)
 		} else {
 			sess = s
-			offer := media.BuildOffer(g.core.LocalIP(), s.LocalPort())
-			hdr := make(map[string]string, len(r.spec.Invite.Headers)+1)
-			for k, v := range r.spec.Invite.Headers {
+			mediaBody = media.BuildOffer(g.core.LocalIP(), s.LocalPort())
+			mediaHdr = map[string]string{"Content-Type": "application/sdp"}
+		}
+	}
+
+	// Establecimiento: por escenario (señalización dirigida por el YAML, sostenida
+	// hasta el STOP) o por el INVITE básico de la plantilla.
+	var call *sipcore.UACCall
+	var err error
+	if r.spec.Scenario != nil {
+		rn := runner.New(g.core, scenarioTarget(r.spec.Invite), g.log)
+		// Establish hace INVITE -> respuestas -> ACK: la llamada queda establecida.
+		call, err = rn.Establish(ctx, r.spec.Scenario, mediaHdr, mediaBody)
+	} else {
+		// Copia de la plantilla para no mutar la Spec compartida.
+		inv := r.spec.Invite
+		if mediaBody != nil {
+			hdr := make(map[string]string, len(inv.Headers)+1)
+			for k, v := range inv.Headers {
 				hdr[k] = v
 			}
 			hdr["Content-Type"] = "application/sdp"
 			inv.Headers = hdr
-			inv.Body = offer
+			inv.Body = mediaBody
 		}
+		call, err = g.core.DialInvite(ctx, inv)
 	}
-
-	call, err := g.core.DialInvite(ctx, inv)
 	if err != nil {
 		r.pending.Add(-1)
 		r.failed.Add(1)
 		closeSession(sess)
 		return
 	}
-	if err := call.WaitAnswer(ctx); err != nil {
-		r.pending.Add(-1)
-		r.failed.Add(1)
-		closeSession(sess)
-		return
-	}
-	if err := call.Ack(ctx); err != nil {
-		r.pending.Add(-1)
-		r.failed.Add(1)
-		closeSession(sess)
-		return
+
+	// El INVITE básico aún debe esperar la respuesta y enviar el ACK; con escenario
+	// eso ya está hecho dentro de Establish.
+	if r.spec.Scenario == nil {
+		if err := call.WaitAnswer(ctx); err != nil {
+			r.pending.Add(-1)
+			r.failed.Add(1)
+			closeSession(sess)
+			return
+		}
+		if err := call.Ack(ctx); err != nil {
+			r.pending.Add(-1)
+			r.failed.Add(1)
+			closeSession(sess)
+			return
+		}
 	}
 
 	// Establecida.
@@ -352,6 +385,17 @@ func (g *Generator) startMedia(ctx context.Context, call *sipcore.UACCall, r *ru
 		sess.SetSource(media.NewPCMSource(r.spec.Audio))
 	}
 	return sess.Start(ctx, desc.ConnIP, desc.Port, pt, desc.PTime) == nil
+}
+
+// scenarioTarget construye la URI de destino (Request-URI) para el runner a partir
+// del destino real de la Spec (el SBC/peer). El escenario aporta las identidades
+// (From/To, cabeceras); aquí solo decidimos a dónde se envía de verdad el paquete.
+func scenarioTarget(inv sipcore.RichInvite) string {
+	uri := fmt.Sprintf("sip:%s:%d", inv.DestHost, inv.DestPort)
+	if inv.Transport == "tcp" {
+		uri += ";transport=tcp"
+	}
+	return uri
 }
 
 // closeSession cierra una sesión de media si no es nil (azúcar para los caminos de error).

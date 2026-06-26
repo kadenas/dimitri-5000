@@ -69,50 +69,14 @@ func (r *Runner) runUAC(ctx context.Context, sc *scenario.Scenario) error {
 			}
 			switch st.Send {
 			case "INVITE":
-				headers := substMap(st.Headers, vars)
-				// El From de un INVITE inicial debe llevar 'tag'. Si el escenario
-				// define From sin tag, se lo añadimos (sipgo lo exige para el diálogo).
-				if from, ok := headers["From"]; ok && !strings.Contains(from, "tag=") {
-					headers["From"] = from + ";tag=" + genTag()
-				}
-				body := r.bodyFor(sc, st)
-				if len(body) > 0 {
-					if _, ok := headers["Content-Type"]; !ok {
-						headers["Content-Type"] = "application/sdp"
-					}
-				}
-
-				c, err := r.core.DialURIWithOptions(ctx, r.target, sipcore.CallOptions{
-					Headers: headers,
-					Body:    body,
-				})
+				c, err := r.doInvite(ctx, sc, st, vars, nil, nil, observed)
 				if err != nil {
 					return fmt.Errorf("paso %d (send INVITE): %w", i+1, err)
 				}
 				call = c
-
-				// Observamos cada respuesta hasta el 2xx final.
-				err = call.WaitAnswerObserved(ctx, func(code int, reason string) {
-					observed[code] = true
-					r.log.Info("recibido", "code", code, "reason", reason)
-				})
-				if err != nil {
-					return fmt.Errorf("paso %d: la llamada no fue contestada: %w", i+1, err)
-				}
-
-				// Consumimos los pasos 'recv' de respuestas que siguen al INVITE,
-				// validando que los no opcionales realmente llegaron.
 				i++
-				for i < len(sc.Steps) {
-					next := sc.Steps[i]
-					if next.Kind() != scenario.KindRecv || !isStatusCode(next.Recv) {
-						break
-					}
-					code, _ := strconv.Atoi(next.Recv)
-					if !observed[code] && !next.Optional {
-						return fmt.Errorf("paso %d: se esperaba recibir %d y no llegó", i+1, code)
-					}
-					i++
+				if i, err = consumeInviteResponses(sc.Steps, i, observed); err != nil {
+					return err
 				}
 				continue
 
@@ -166,6 +130,135 @@ func (r *Runner) runUAC(ctx context.Context, sc *scenario.Scenario) error {
 
 	r.log.Info("escenario completado", "name", sc.Name)
 	return nil
+}
+
+// doInvite ejecuta un paso 'send INVITE': construye las cabeceras (con tag en el
+// From) y el cuerpo, envía el INVITE al destino y espera la respuesta final,
+// observando cada provisional. headerOverride/bodyOverride permiten al motor de
+// carga imponer el SDP de oferta (con el puerto RTP real) y su Content-Type sobre
+// lo que defina el escenario; si ambos son nil/vacíos, se usa el body del escenario.
+func (r *Runner) doInvite(ctx context.Context, sc *scenario.Scenario, st scenario.Step,
+	vars, headerOverride map[string]string, bodyOverride []byte, observed map[int]bool) (*sipcore.UACCall, error) {
+
+	headers := substMap(st.Headers, vars)
+	// El From de un INVITE inicial debe llevar 'tag'. Si el escenario define From
+	// sin tag, se lo añadimos (sipgo lo exige para el diálogo).
+	if from, ok := headers["From"]; ok && !strings.Contains(from, "tag=") {
+		headers["From"] = from + ";tag=" + genTag()
+	}
+
+	var body []byte
+	if bodyOverride != nil || len(headerOverride) > 0 {
+		body = bodyOverride
+		for k, v := range headerOverride {
+			headers[k] = v
+		}
+	} else {
+		body = r.bodyFor(sc, st)
+	}
+	if len(body) > 0 {
+		if _, ok := headers["Content-Type"]; !ok {
+			headers["Content-Type"] = "application/sdp"
+		}
+	}
+
+	call, err := r.core.DialURIWithOptions(ctx, r.target, sipcore.CallOptions{Headers: headers, Body: body})
+	if err != nil {
+		return nil, fmt.Errorf("enviando INVITE: %w", err)
+	}
+	// Observamos cada respuesta hasta la final.
+	if err := call.WaitAnswerObserved(ctx, func(code int, reason string) {
+		observed[code] = true
+		r.log.Info("recibido", "code", code, "reason", reason)
+	}); err != nil {
+		return nil, fmt.Errorf("la llamada no fue contestada: %w", err)
+	}
+	return call, nil
+}
+
+// consumeInviteResponses avanza sobre los pasos 'recv' de respuesta que siguen al
+// INVITE, validando que los no opcionales realmente llegaron. Devuelve el índice
+// del primer paso que ya no es un recv de respuesta.
+func consumeInviteResponses(steps []scenario.Step, i int, observed map[int]bool) (int, error) {
+	for i < len(steps) {
+		next := steps[i]
+		if next.Kind() != scenario.KindRecv || !isStatusCode(next.Recv) {
+			break
+		}
+		code, _ := strconv.Atoi(next.Recv)
+		if !observed[code] && !next.Optional {
+			return i, fmt.Errorf("paso %d: se esperaba recibir %d y no llegó", i+1, code)
+		}
+		i++
+	}
+	return i, nil
+}
+
+// Establish ejecuta los pasos del escenario UAC necesarios para dejar la llamada
+// ESTABLECIDA (INVITE -> respuestas -> ACK) y devuelve la llamada VIVA, SIN ejecutar
+// las pausas ni el BYE finales del escenario. Está pensado para el motor de carga:
+// éste sostiene la llamada (con RTP) hasta el STOP y la cuelga él, así que aquí solo
+// nos interesa la fase de señalización del establecimiento.
+//
+// headerOverride/bodyOverride permiten imponer el SDP de oferta (con el puerto RTP
+// real) y su Content-Type sobre el INVITE del escenario; nil = usar lo del escenario.
+func (r *Runner) Establish(ctx context.Context, sc *scenario.Scenario,
+	headerOverride map[string]string, bodyOverride []byte) (*sipcore.UACCall, error) {
+
+	if sc.Role != scenario.RoleUAC {
+		return nil, fmt.Errorf("la carga con escenario solo admite role uac (encontrado %q)", sc.Role)
+	}
+	vars := r.buildVars(sc)
+	var call *sipcore.UACCall
+	observed := make(map[int]bool)
+
+	i := 0
+	for i < len(sc.Steps) {
+		st := sc.Steps[i]
+		switch st.Kind() {
+		case scenario.KindSend:
+			switch st.Send {
+			case "INVITE":
+				c, err := r.doInvite(ctx, sc, st, vars, headerOverride, bodyOverride, observed)
+				if err != nil {
+					return nil, fmt.Errorf("paso %d (send INVITE): %w", i+1, err)
+				}
+				call = c
+				i++
+				if i, err = consumeInviteResponses(sc.Steps, i, observed); err != nil {
+					return nil, err
+				}
+			case "ACK":
+				if call == nil {
+					return nil, fmt.Errorf("paso %d: ACK sin llamada establecida", i+1)
+				}
+				if err := call.Ack(ctx); err != nil {
+					return nil, fmt.Errorf("paso %d (send ACK): %w", i+1, err)
+				}
+				// Establecida: el motor de carga toma el control (sostener + colgar).
+				return call, nil
+			default:
+				return nil, fmt.Errorf("paso %d: 'send %s' no se admite antes del establecimiento en carga", i+1, st.Send)
+			}
+		case scenario.KindPause:
+			// En carga ignoramos las pausas del escenario: la duración de la llamada
+			// la decide el motor de carga (sostener hasta STOP).
+			i++
+		case scenario.KindNop:
+			if st.Log != "" {
+				r.log.Info("escenario", "log", subst(st.Log, vars))
+			}
+			i++
+		case scenario.KindRecv:
+			return nil, fmt.Errorf("paso %d: 'recv %s' fuera de la secuencia de establecimiento", i+1, st.Recv)
+		}
+	}
+
+	if call != nil {
+		// Escenario sin ACK explícito pero con la llamada contestada: válida.
+		return call, nil
+	}
+	return nil, fmt.Errorf("el escenario no estableció ninguna llamada (sin INVITE contestado)")
 }
 
 // buildVars construye el mapa de variables: primero las internas (IP/puerto/host

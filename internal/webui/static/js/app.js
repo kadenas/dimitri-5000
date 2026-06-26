@@ -490,6 +490,18 @@ async function loadScenarios() {
       return '<option value="' + esc(s.file) + '">' + esc(etiqueta) + "</option>";
     }).join("") || '<option value="">— sin escenarios —</option>';
     sel.value = selectedScenarioFile;
+
+    // Selector del motor de CARGA: solo escenarios UAC válidos (los que originan
+    // llamadas), con una opción para el INVITE básico. Conserva la elección.
+    const selLoad = document.getElementById("load-scenario");
+    if (selLoad) {
+      const prev = selLoad.value;
+      const uac = lista.filter((s) => !s.error && String(s.role).toLowerCase() === "uac");
+      selLoad.innerHTML =
+        '<option value="">(INVITE básico)</option>' +
+        uac.map((s) => '<option value="' + esc(s.file) + '">' + esc(s.file + " · " + (s.name || "")) + "</option>").join("");
+      if (prev && uac.some((s) => s.file === prev)) selLoad.value = prev;
+    }
   } catch (e) {
     sel.innerHTML = '<option value="">— error al listar —</option>';
   }
@@ -946,6 +958,7 @@ function renderLoad(datos) {
     label + '</span><span class="lc-v">' + value + "</span></div>";
 
   let html = '<div class="load-row">' + state +
+    (s.scenario ? chip("SCENARIO", esc(s.scenario)) : "") +
     chip("TARGET", s.target) +
     chip("ACTIVE", s.active, s.active >= s.target ? "ok" : "") +
     chip("PENDING", s.pending) +
@@ -1005,6 +1018,7 @@ document.getElementById("load-form").addEventListener("submit", async (ev) => {
     cps: parseFloat(val("load-cps")) || 0,
     max_calls: parseInt(val("load-max"), 10) || 0,
     with_media: document.getElementById("load-media").checked,
+    scenario: document.getElementById("load-scenario").value || "",
     to: toAgent ? "" : to,
     dest_host: destHost,
     dest_port: destPort,

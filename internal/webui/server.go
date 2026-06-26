@@ -541,6 +541,7 @@ type loadReq struct {
 	CPS        float64 `json:"cps"`        // ritmo de lanzamiento/reposición (llamadas/seg)
 	MaxCalls   int64   `json:"max_calls"`  // tope total de INVITEs (0 = sin tope)
 	WithMedia  bool    `json:"with_media"` // enviar RTP en cada llamada
+	Scenario   string  `json:"scenario"`   // nombre del escenario UAC por llamada (vacío = INVITE básico)
 
 	// Destino (igual que PLACE CALL).
 	To         string            `json:"to"`
@@ -614,6 +615,23 @@ func (s *Server) handleLoadStart(w http.ResponseWriter, r *http.Request) {
 		MaxCalls:   req.MaxCalls,
 		WithMedia:  req.WithMedia,
 	}
+
+	// Escenario opcional por llamada: lo cargamos de disco (anti path-traversal con
+	// filepath.Base) y exigimos role uac (el motor de carga solo origina llamadas).
+	if req.Scenario != "" {
+		base := filepath.Base(req.Scenario)
+		sc, err := scenario.Load(filepath.Join(s.scenariosDir, base))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if sc.Role != scenario.RoleUAC {
+			http.Error(w, "la carga solo admite escenarios role uac", http.StatusBadRequest)
+			return
+		}
+		spec.Scenario = sc
+	}
+
 	if err := ctrl.StartLoad(spec); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

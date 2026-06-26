@@ -1,7 +1,38 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-06-25 (sesión 10: UX autocompletado + HOLD ∞ + Fase 3 motor de carga)
+Fecha: 2026-06-26 (sesión 11: carga por ESCENARIO — punto 1 del próximo)
+
+## Sesión 11 — Carga que ejecuta un ESCENARIO por llamada (estilo SIPp)
+- OBJETIVO (era el "PRÓXIMO" de la sesión 10): que el motor de carga establezca cada
+  llamada ejecutando un ESCENARIO UAC (señalización dirigida por el YAML: From/To,
+  cabeceras, recv esperados) en vez del INVITE básico, SOSTENIÉNDOLA hasta el STOP.
+- RUNNER (internal/runner/runner.go) refactor + API nueva, sin tocar el modo CLI:
+  - Extraído el paso INVITE a `doInvite(...)` (cabeceras + tag From + body, observa
+    respuestas) y el consumo de recv a `consumeInviteResponses(...)`. runUAC los reusa.
+  - NUEVO `Establish(ctx, sc, headerOverride, bodyOverride) (*UACCall, error)`: ejecuta
+    INVITE -> respuestas -> ACK y DEVUELVE la llamada VIVA, sin ejecutar pausas ni BYE
+    (la duración la manda la carga). headerOverride/bodyOverride imponen el SDP de
+    oferta con el puerto RTP real. Solo role uac (error si no).
+- LOAD (internal/load/load.go): Spec.Scenario *scenario.Scenario (nil = INVITE básico).
+  El worker, si hay escenario, usa runner.Establish (ya deja la llamada establecida)
+  en vez de DialInvite+WaitAnswer+Ack; el resto (media, sostener hasta STOP/BYE, colgar)
+  igual. Helper scenarioTarget(inv) = sip:DestHost:DestPort del destino real (SBC/peer);
+  el escenario aporta las identidades. Stats.Scenario expone el nombre del escenario.
+- WEBUI: loadReq.Scenario (nombre de fichero); handleLoadStart lo carga de disco
+  (filepath.Base anti path-traversal) y exige role uac (400 si no). UI: selector
+  "SCENARIO (uac)" en el bloque 08 LOAD TEST (loadScenarios rellena solo los uac
+  válidos + opción "(INVITE básico)"); chip SCENARIO en el panel de métricas.
+- TESTS: internal/load TestCargaConEscenario (sostiene N ejecutando un escenario con
+  pause 1h + BYE que DEBEN ignorarse; valida Stats.Scenario y el drenaje). go test ./...
+  y go test -race ./internal/load en verde.
+- VERIFICADO e2e (binario): web :8099 + agente UAS uac-2 :5072; carga default->:5072
+  con scenario=uac-basico.yaml, N=10@cps20 media=true -> 10 sostenidas, scenario=
+  "uac-llamada-basica", RTP 1360/1360 0 pérdida, 0 failed/ended; STOP drena a 0;
+  escenario UAS rechazado con 400. Las pausas/BYE del YAML se ignoran (lo cuelga la carga).
+- PRÓXIMO: validar a 1000+ contra un destino REAL (no loopback, que duplica carga).
+  Pendientes mayores que quedan: Fase 5.3 (grabar RTP entrante a WAV + oírlo con <audio>),
+  Fase 5.4 (HOLD real re-INVITE), G3 (empaquetado Wails).
 
 ## Sesión 10 — UX, comportamiento de llamada y Fase 3 (motor de carga)
 - UX (rellenar a golpe de ratón):
