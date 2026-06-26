@@ -1,0 +1,20 @@
+# Escenario UAS con TEMPORIZACIÓN: cuando llega la llamada (B), B espera 500 ms,
+# manda 180 Ringing, "suena" 2 s más y solo entonces contesta con 200. Útil para
+# probar timers de SBC/PBX (espera de provisional, tiempo de descuelgue).
+name: uas-lento
+role: uas
+description: "Recibe INVITE -> espera 500ms -> 180 -> suena 2s -> 200 -> espera ACK y BYE"
+
+defaults:
+  transport: udp
+  recv_timeout: 30s
+
+steps:
+  - recv: INVITE
+  - pause: 500ms      # B "piensa" medio segundo antes de avisar de que suena
+  - send: "180"
+  - pause: 2s         # tiempo sonando antes de descolgar
+  - send: "200"       # contesta (con media si el agente la tiene activada)
+  - recv: ACK
+  - recv: BYE         # sostiene la llamada hasta que A cuelga
+  - send: "200"

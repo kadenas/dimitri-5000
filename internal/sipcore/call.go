@@ -268,12 +268,39 @@ func normalizeReferTo(v string) string {
 
 // ----------------------------- Rol UAS (recibir) -----------------------------
 
-// UASPolicy define cómo responde el servidor a una llamada entrante. Para la
-// Fase 1 es un auto-answer simple y configurable.
+// UASPolicy define cómo responde el servidor a una llamada entrante. El modo
+// simple (RingDelay/AnswerCode/HoldTime) es un auto-answer configurable; si Script
+// no está vacío, dirige la respuesta paso a paso (escenarios role uas).
 type UASPolicy struct {
 	RingDelay  time.Duration // espera entre el 180 Ringing y la respuesta final
 	AnswerCode int           // código de respuesta final (200 = contestar; 486 = ocupado, etc.)
 	HoldTime   time.Duration // tras contestar, cuánto sostener la llamada antes de colgar (0 = esperar el BYE remoto)
+
+	// Script, si no está vacío, dirige la respuesta a las llamadas entrantes paso a
+	// paso (pausas + respuestas con su temporización), sustituyendo a RingDelay/
+	// AnswerCode/HoldTime. Lo construye el runner de escenarios (rol uas) a partir
+	// del YAML; sipcore solo lo EJECUTA, sin conocer el lenguaje de escenarios.
+	Script []UASStep
+}
+
+// UASStepKind distingue las acciones de un paso del guion de respuesta UAS.
+type UASStepKind int
+
+const (
+	UASPause            UASStepKind = iota // esperar Dur
+	UASSendProvisional                     // enviar respuesta 1xx (Code/Reason)
+	UASSendFinal                           // enviar respuesta final (2xx con media si procede; 3xx-6xx = rechazo)
+	UASWaitBye                             // esperar el BYE remoto (el otro extremo cuelga)
+	UASSendBye                             // colgar nosotros (enviar BYE)
+)
+
+// UASStep es un paso del guion de respuesta del UAS. Es un tipo NEUTRO (sin saber
+// de YAML): el runner traduce un escenario role uas a una lista de estos pasos.
+type UASStep struct {
+	Kind   UASStepKind
+	Dur    time.Duration // para UASPause
+	Code   int           // para UASSendProvisional / UASSendFinal
+	Reason string        // texto de la respuesta (vacío = estándar del código)
 }
 
 // defaultUASPolicy: contesta tras 200 ms de "ringing" y deja que cuelgue el otro
@@ -286,9 +313,20 @@ func defaultUASPolicy() UASPolicy {
 	}
 }
 
-// SetUASPolicy ajusta el comportamiento del servidor. Debe llamarse ANTES de Serve.
+// SetUASPolicy ajusta el comportamiento del servidor. Es seguro llamarlo en
+// caliente (con el servidor ya sirviendo): onInvite toma una copia bajo lock, así
+// que las llamadas EN CURSO no se ven afectadas y las nuevas usan la política nueva.
 func (c *Core) SetUASPolicy(p UASPolicy) {
+	c.uasMu.Lock()
 	c.uas = p
+	c.uasMu.Unlock()
+}
+
+// uasPolicy devuelve una copia de la política UAS vigente (lectura segura).
+func (c *Core) uasPolicy() UASPolicy {
+	c.uasMu.RLock()
+	defer c.uasMu.RUnlock()
+	return c.uas
 }
 
 // Serve levanta el servidor SIP (rol UAS) y bloquea hasta que el contexto se
@@ -300,6 +338,7 @@ func (c *Core) Serve(ctx context.Context, network, addr string) error {
 		return fmt.Errorf("creando servidor SIP: %w", err)
 	}
 	c.server = srv
+	c.serveCtx = ctx // vida del servidor: el guion UAS deriva su cancelación de aquí
 	// Caché de diálogos entrantes (UAS).
 	c.dialogServer = sipgo.NewDialogServerCache(c.client, c.contact)
 
@@ -341,15 +380,26 @@ func (c *Core) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 	}
 	c.log.Info("llamada entrante", entrante...)
 
+	// Copia de la política vigente (la web puede cambiarla en caliente). Las llamadas
+	// en curso usan la foto que tomaron aquí; las nuevas, la política nueva.
+	pol := c.uasPolicy()
+
+	// Escenario UAS: si hay un guion cargado, dirige él la respuesta (pausas y
+	// respuestas con su temporización), sustituyendo al auto-answer fijo.
+	if len(pol.Script) > 0 {
+		c.runUASScript(pol, req, dlg, tx)
+		return
+	}
+
 	// 180 Ringing: avisamos de que "suena" antes de contestar.
-	if c.uas.RingDelay > 0 {
+	if pol.RingDelay > 0 {
 		if err := dlg.Respond(180, "Ringing", nil); err != nil {
 			c.log.Error("respondiendo 180", "error", err)
 			return
 		}
 		// Pausa que simula el tiempo que tarda en descolgarse.
 		select {
-		case <-time.After(c.uas.RingDelay):
+		case <-time.After(pol.RingDelay):
 		case <-tx.Done(): // el otro extremo canceló mientras "sonaba"
 			return
 		}
@@ -361,20 +411,20 @@ func (c *Core) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 	// con el código de la política sin cuerpo. WriteResponse para un 2xx bloquea
 	// hasta recibir el ACK, dejando el diálogo confirmado.
 	answeredWithMedia := false
-	if c.uas.AnswerCode >= 200 && c.uas.AnswerCode < 300 {
+	if pol.AnswerCode >= 200 && pol.AnswerCode < 300 {
 		answeredWithMedia = c.answerWithMedia(req, dlg)
 	}
 	if !answeredWithMedia {
-		if err := dlg.Respond(c.uas.AnswerCode, reasonFor(c.uas.AnswerCode), nil); err != nil {
-			c.log.Error("respondiendo final", "code", c.uas.AnswerCode, "error", err)
+		if err := dlg.Respond(pol.AnswerCode, reasonFor(pol.AnswerCode), nil); err != nil {
+			c.log.Error("respondiendo final", "code", pol.AnswerCode, "error", err)
 			return
 		}
 	}
 
 	// Si contestamos y hay HoldTime, colgamos nosotros tras ese tiempo.
-	if c.uas.AnswerCode >= 200 && c.uas.AnswerCode < 300 && c.uas.HoldTime > 0 {
+	if pol.AnswerCode >= 200 && pol.AnswerCode < 300 && pol.HoldTime > 0 {
 		select {
-		case <-time.After(c.uas.HoldTime):
+		case <-time.After(pol.HoldTime):
 			byeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := dlg.Bye(byeCtx); err != nil {
@@ -385,6 +435,124 @@ func (c *Core) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 			c.closeMediaSession(callIDOf(req)) // cancelado/colgado: liberamos la media
 		}
 	}
+}
+
+// runUASScript ejecuta el guion de respuesta del UAS (construido por el runner a
+// partir de un escenario role uas): pausas y respuestas con su temporización. El
+// 2xx se contesta con media si está activada y hay oferta; dlg.Respond para un 2xx
+// bloquea hasta el ACK, así que los pasos siguientes (esperar/enviar BYE) ocurren
+// con el diálogo ya confirmado. Una respuesta no-2xx termina el diálogo.
+func (c *Core) runUASScript(pol UASPolicy, req *sip.Request, dlg *sipgo.DialogServerSession, tx sip.ServerTransaction) {
+	ctx := c.serveCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	id := callIDOf(req)
+	answered := false
+
+	for _, st := range pol.Script {
+		switch st.Kind {
+		case UASPause:
+			// Antes de contestar, un CANCEL del otro extremo (tx.Done) aborta la espera;
+			// después de contestar el tx del INVITE ya terminó, así que no lo escuchamos.
+			if answered {
+				select {
+				case <-time.After(st.Dur):
+				case <-ctx.Done():
+					return
+				}
+			} else {
+				select {
+				case <-time.After(st.Dur):
+				case <-ctx.Done():
+					return
+				case <-tx.Done():
+					return
+				}
+			}
+
+		case UASSendProvisional:
+			if err := dlg.Respond(st.Code, reasonOr(st.Code, st.Reason), nil); err != nil {
+				c.log.Error("guion UAS: respondiendo provisional", "code", st.Code, "error", err)
+				return
+			}
+
+		case UASSendFinal:
+			if st.Code >= 200 && st.Code < 300 {
+				if !c.answerWithMedia(req, dlg) {
+					if err := dlg.Respond(st.Code, reasonOr(st.Code, st.Reason), nil); err != nil {
+						c.log.Error("guion UAS: respondiendo 2xx", "code", st.Code, "error", err)
+						return
+					}
+				}
+				answered = true
+			} else {
+				if err := dlg.Respond(st.Code, reasonOr(st.Code, st.Reason), nil); err != nil {
+					c.log.Error("guion UAS: respondiendo final", "code", st.Code, "error", err)
+				}
+				return // respuesta no-2xx: la llamada no se establece
+			}
+
+		case UASWaitBye:
+			// Esperamos a que el otro extremo cuelgue. onBye responde el 200 y nos
+			// despierta; aquí no reenviamos nada (evita doble respuesta al BYE).
+			c.waitBye(ctx, id)
+			return
+
+		case UASSendBye:
+			byeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := dlg.Bye(byeCtx); err != nil {
+				c.log.Error("guion UAS: enviando BYE", "error", err)
+			}
+			cancel()
+			c.closeMediaSession(id)
+			return
+		}
+	}
+}
+
+// waitBye bloquea hasta que llegue el BYE de la llamada (Call-ID) o se cancele el
+// contexto. El disparo lo hace onBye al recibir el BYE de ese diálogo.
+func (c *Core) waitBye(ctx context.Context, callID string) {
+	ch := make(chan struct{})
+	c.byeMu.Lock()
+	if c.byeWaiters == nil {
+		c.byeWaiters = make(map[string]chan struct{})
+	}
+	c.byeWaiters[callID] = ch
+	c.byeMu.Unlock()
+
+	defer func() {
+		c.byeMu.Lock()
+		if c.byeWaiters[callID] == ch {
+			delete(c.byeWaiters, callID)
+		}
+		c.byeMu.Unlock()
+	}()
+
+	select {
+	case <-ch:
+	case <-ctx.Done():
+	}
+}
+
+// fireByeWaiter despierta al guion UAS que esperaba el BYE de esta llamada (si lo
+// había). Cierra el canal una sola vez (el que tiene la entrada la borra y cierra).
+func (c *Core) fireByeWaiter(callID string) {
+	c.byeMu.Lock()
+	if ch, ok := c.byeWaiters[callID]; ok {
+		delete(c.byeWaiters, callID)
+		close(ch)
+	}
+	c.byeMu.Unlock()
+}
+
+// reasonOr devuelve reason si no está vacío; si lo está, el texto estándar del código.
+func reasonOr(code int, reason string) string {
+	if reason != "" {
+		return reason
+	}
+	return reasonFor(code)
 }
 
 // onOptions responde a un OPTIONS con 200 OK. Es el comportamiento de un trunk
@@ -432,6 +600,7 @@ func (c *Core) onBye(req *sip.Request, tx sip.ServerTransaction) {
 	c.closeMediaSession(callIDOf(req))
 	if c.dialogServer != nil {
 		if err := c.dialogServer.ReadBye(req, tx); err == nil {
+			c.fireByeWaiter(callIDOf(req)) // despierta al guion UAS que esperaba el BYE
 			return
 		}
 	}
@@ -451,16 +620,45 @@ func (c *Core) onCancel(req *sip.Request, tx sip.ServerTransaction) {
 	_ = tx.Respond(sip.NewResponseFromRequest(req, 200, "OK", nil))
 }
 
-// reasonFor devuelve el texto estándar para los códigos que usamos en la Fase 1.
+// reasonFor devuelve el texto estándar (RFC 3261) para los códigos habituales en
+// escenarios. Si no se reconoce, devuelve un texto genérico por familia.
 func reasonFor(code int) string {
 	switch code {
+	case 100:
+		return "Trying"
+	case 180:
+		return "Ringing"
+	case 183:
+		return "Session Progress"
 	case 200:
 		return "OK"
+	case 400:
+		return "Bad Request"
+	case 403:
+		return "Forbidden"
+	case 404:
+		return "Not Found"
+	case 408:
+		return "Request Timeout"
+	case 480:
+		return "Temporarily Unavailable"
 	case 486:
 		return "Busy Here"
+	case 487:
+		return "Request Terminated"
+	case 500:
+		return "Server Internal Error"
+	case 503:
+		return "Service Unavailable"
 	case 603:
 		return "Decline"
-	default:
+	}
+	switch {
+	case code >= 100 && code < 200:
+		return "Provisional"
+	case code >= 200 && code < 300:
 		return "OK"
+	default:
+		return "Error"
 	}
 }

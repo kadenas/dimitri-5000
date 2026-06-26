@@ -47,9 +47,20 @@ type Core struct {
 	server       *sipgo.Server
 	dialogServer *sipgo.DialogServerCache
 
-	// uas define cómo responde el servidor a las llamadas entrantes. Se puede
-	// ajustar antes de llamar a Serve; si no, usa valores por defecto sensatos.
-	uas UASPolicy
+	// serveCtx es el contexto de vida del servidor (fijado en Serve). Permite a los
+	// handlers (p. ej. el guion UAS) derivar la cancelación de la parada del agente.
+	serveCtx context.Context
+
+	// uas define cómo responde el servidor a las llamadas entrantes. Protegido por
+	// uasMu porque la web puede cambiar la política (asignar/quitar escenario UAS)
+	// EN CALIENTE mientras llegan llamadas; onInvite toma una copia bajo lock.
+	uasMu sync.RWMutex
+	uas   UASPolicy
+
+	// byeWaiters coordina el paso "recv BYE" del guion UAS: el guion registra un
+	// canal por Call-ID y onBye lo cierra cuando llega el BYE de esa llamada.
+	byeMu      sync.Mutex
+	byeWaiters map[string]chan struct{}
 
 	// msgHandler se invoca por cada MESSAGE entrante (mensajería SIP). Opcional.
 	msgHandler func(MessageEvent)

@@ -28,6 +28,7 @@ import (
 	"github.com/kadenas/dimitri-5000/internal/media"
 	"github.com/kadenas/dimitri-5000/internal/monitor"
 	"github.com/kadenas/dimitri-5000/internal/netutil"
+	"github.com/kadenas/dimitri-5000/internal/runner"
 	"github.com/kadenas/dimitri-5000/internal/scenario"
 	"github.com/kadenas/dimitri-5000/internal/sipcore"
 	"github.com/kadenas/dimitri-5000/internal/trace"
@@ -72,10 +73,11 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/trunks/remove", s.handleTrunkRemove) // POST {agent_id, id}
 
 	// API de agentes (instancias SIP).
-	mux.HandleFunc("/api/agents", s.handleAgents)             // GET lista | POST alta
-	mux.HandleFunc("/api/agents/start", s.handleAgentStart)   // POST {id}
-	mux.HandleFunc("/api/agents/stop", s.handleAgentStop)     // POST {id}
-	mux.HandleFunc("/api/agents/remove", s.handleAgentRemove) // POST {id}
+	mux.HandleFunc("/api/agents", s.handleAgents)                        // GET lista | POST alta
+	mux.HandleFunc("/api/agents/start", s.handleAgentStart)              // POST {id}
+	mux.HandleFunc("/api/agents/stop", s.handleAgentStop)                // POST {id}
+	mux.HandleFunc("/api/agents/remove", s.handleAgentRemove)            // POST {id}
+	mux.HandleFunc("/api/agents/uas-scenario", s.handleAgentUASScenario) // POST {id, file?} (file vacío = quitar)
 
 	// API de control de llamadas (por agente).
 	mux.HandleFunc("/api/calls", s.handleCalls)            // GET: estado de las llamadas
@@ -388,6 +390,56 @@ func (s *Server) handleAgentRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleAgentUASScenario asigna (o quita) un escenario UAS a un agente: cómo
+// contesta a las llamadas entrantes. Con 'file' vacío vuelve al auto-answer fijo.
+// La traducción del YAML al guion se hace aquí (runner.BuildUASPolicy) para que el
+// agente no conozca el lenguaje de escenarios.
+func (s *Server) handleAgentUASScenario(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "usa POST", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.manager == nil {
+		http.Error(w, "gestor de agentes no disponible", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		AgentID string `json:"agent_id"`
+		File    string `json:"file"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "JSON inválido", http.StatusBadRequest)
+		return
+	}
+	a := s.manager.Get(req.AgentID)
+	if a == nil {
+		http.Error(w, "agente no encontrado", http.StatusNotFound)
+		return
+	}
+
+	// 'file' vacío: quitar el escenario (volver al auto-answer fijo).
+	if req.File == "" {
+		a.ClearUASScenario()
+		s.writeJSON(w, map[string]string{"status": "cleared"})
+		return
+	}
+
+	// Cargamos el escenario (anti path-traversal) y exigimos role uas.
+	base := filepath.Base(req.File)
+	sc, err := scenario.Load(filepath.Join(s.scenariosDir, base))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	pol, err := runner.BuildUASPolicy(sc)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	a.SetUASScenario(sc.Name, pol)
+	s.writeJSON(w, map[string]string{"status": "set", "scenario": sc.Name})
 }
 
 // --- Llamadas ----------------------------------------------------------------

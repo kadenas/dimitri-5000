@@ -78,6 +78,13 @@ type Agent struct {
 	mon    *monitor.Monitor // faro de ESTE agente; existe mientras está running
 
 	audio []int16 // audio (PCM 8 kHz mono) a enviar por RTP; persiste entre stop/start
+
+	// Escenario UAS asignado (rol "contestador scriptado"): si está, su guion dirige
+	// la respuesta a las llamadas entrantes en vez del auto-answer fijo. Persiste
+	// entre stop/start. La traducción YAML -> guion la hace la web (runner); aquí solo
+	// guardamos el nombre (para mostrarlo) y la política ya construida.
+	uasScenario string
+	uasPol      *sipcore.UASPolicy
 }
 
 // newAgent crea el objeto agente en estado "stopped" (sin tocar la red). Si core
@@ -132,7 +139,13 @@ func (a *Agent) Start(parent context.Context) error {
 	// Activamos el plano de media (RTP): las llamadas entrantes se contestan con SDP
 	// y audio G.711, y las salientes (vía control) ofertan media.
 	a.core.EnableMedia()
-	a.core.SetUASPolicy(a.spec.policy())
+	// Política UAS: el guion de un escenario asignado (si lo hay) tiene prioridad
+	// sobre el auto-answer fijo de la Spec.
+	if a.uasPol != nil {
+		a.core.SetUASPolicy(*a.uasPol)
+	} else {
+		a.core.SetUASPolicy(a.spec.policy())
+	}
 	a.ctrl = control.New(ctx, a.core, a.log)
 	// Los MESSAGE entrantes se registran en el control del agente (antes de Serve).
 	a.core.SetMessageHandler(a.ctrl.RecordIncomingMessage)
@@ -280,6 +293,39 @@ func (a *Agent) AudioSamples() int {
 	return len(a.audio)
 }
 
+// SetUASScenario asigna un escenario UAS al agente: su guion (ya traducido por la
+// web) dirigirá la respuesta a las llamadas entrantes. Persiste entre paradas y se
+// aplica EN CALIENTE si el agente está corriendo (las llamadas nuevas lo usan).
+func (a *Agent) SetUASScenario(name string, pol sipcore.UASPolicy) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.uasScenario = name
+	p := pol
+	a.uasPol = &p
+	if a.core != nil {
+		a.core.SetUASPolicy(pol)
+	}
+}
+
+// ClearUASScenario quita el escenario UAS: el agente vuelve a su auto-answer fijo
+// (la política de su Spec). Aplica en caliente si está corriendo.
+func (a *Agent) ClearUASScenario() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.uasScenario = ""
+	a.uasPol = nil
+	if a.core != nil {
+		a.core.SetUASPolicy(a.spec.policy())
+	}
+}
+
+// UASScenario devuelve el nombre del escenario UAS asignado ("" = auto-answer fijo).
+func (a *Agent) UASScenario() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.uasScenario
+}
+
 // Core devuelve el núcleo SIP del agente (nil si está parado y no adoptado).
 func (a *Agent) Core() *sipcore.Core {
 	a.mu.Lock()
@@ -312,12 +358,13 @@ func checkBindAvailable(transport, ip string, port int) error {
 
 // Info es la foto del estado de un agente para la interfaz web.
 type Info struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	BindIP    string `json:"bind_ip"`
-	SIPPort   int    `json:"sip_port"`
-	Transport string `json:"transport"`
-	State     string `json:"state"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	BindIP      string `json:"bind_ip"`
+	SIPPort     int    `json:"sip_port"`
+	Transport   string `json:"transport"`
+	State       string `json:"state"`
+	UASScenario string `json:"uas_scenario,omitempty"` // escenario UAS asignado ("" = auto-answer fijo)
 }
 
 // info construye la foto del agente bajo bloqueo.
@@ -325,11 +372,12 @@ func (a *Agent) info() Info {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return Info{
-		ID:        a.spec.ID,
-		Name:      a.spec.Name,
-		BindIP:    a.spec.BindIP,
-		SIPPort:   a.spec.SIPPort,
-		Transport: a.spec.Transport,
-		State:     a.state,
+		ID:          a.spec.ID,
+		Name:        a.spec.Name,
+		BindIP:      a.spec.BindIP,
+		SIPPort:     a.spec.SIPPort,
+		Transport:   a.spec.Transport,
+		State:       a.state,
+		UASScenario: a.uasScenario,
 	}
 }

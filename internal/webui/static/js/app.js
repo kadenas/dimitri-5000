@@ -23,6 +23,7 @@ let selectedAudioAgent = "default";   // agente al que se sube el audio (RTP)
 let selectedLoadAgent = "default";    // agente que ORIGINA la prueba de carga
 let selectedLoadToAgent = "";         // agente DESTINO de la carga ("" = manual)
 let agentsCache = [];            // última lista de agentes (para resolver destino)
+let uasScenariosCache = [];      // escenarios role uas disponibles (selector por agente)
 let selectedCall = "";           // Call-ID elegido en el ladder
 let showOptions = false;         // mostrar diálogos de OPTIONS (keepalive) en el ladder
 let selectedCallId = "";         // id de la llamada seleccionada para la botonera
@@ -163,12 +164,22 @@ function renderAgents(datos) {
       ? '<button class="btn-mini" data-act="stop" data-id="' + esc(a.id) + '">STOP</button>'
       : '<button class="btn-mini go" data-act="start" data-id="' + esc(a.id) + '">START</button>';
     const quitar = '<button class="btn-mini danger" data-act="remove" data-id="' + esc(a.id) + '">REMOVE</button>';
+    // Selector del escenario UAS: cómo contesta este agente a las llamadas entrantes.
+    // "" = auto-answer fijo (la política de su alta). Marcamos el asignado por nombre.
+    const opciones = ['<option value="">— auto-answer —</option>'].concat(
+      uasScenariosCache.map((s) => {
+        const sel = s.name && s.name === a.uas_scenario ? " selected" : "";
+        return '<option value="' + esc(s.file) + '"' + sel + ">" + esc(s.name || s.file) + "</option>";
+      })
+    ).join("");
+    const uasSel = '<select class="uas-sel" data-uas-id="' + esc(a.id) + '">' + opciones + "</select>";
     return "<tr>" +
       "<td>" + esc(a.id) + "</td>" +
       "<td>" + esc(a.name || a.id) + "</td>" +
       "<td>" + esc(a.bind_ip) + ":" + esc(a.sip_port) + "</td>" +
       "<td>" + esc(String(a.transport).toUpperCase()) + "</td>" +
       "<td>" + badge(a.state) + "</td>" +
+      "<td>" + uasSel + "</td>" +
       '<td class="right">' + toggle + " " + quitar + "</td>" +
       "</tr>";
   }).join("");
@@ -180,6 +191,29 @@ function renderAgents(datos) {
         document.getElementById("agent-hint").textContent = "Error: " + e.message;
         document.getElementById("agent-hint").className = "hint error";
       });
+    });
+  });
+
+  // Asignar/quitar escenario UAS al cambiar el selector de un agente.
+  tbody.querySelectorAll(".uas-sel").forEach((sel) => {
+    sel.addEventListener("change", async () => {
+      const hint = document.getElementById("agent-hint");
+      try {
+        const res = await fetch("/api/agents/uas-scenario", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agent_id: sel.dataset.uasId, file: sel.value }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        hint.textContent = sel.value
+          ? "Escenario UAS asignado a " + sel.dataset.uasId + "."
+          : "Agente " + sel.dataset.uasId + " vuelve al auto-answer.";
+        hint.className = "hint";
+        refresh();
+      } catch (e) {
+        hint.textContent = "Error: " + e.message;
+        hint.className = "hint error";
+      }
     });
   });
 }
@@ -502,6 +536,10 @@ async function loadScenarios() {
         uac.map((s) => '<option value="' + esc(s.file) + '">' + esc(s.file + " · " + (s.name || "")) + "</option>").join("");
       if (prev && uac.some((s) => s.file === prev)) selLoad.value = prev;
     }
+
+    // Cache de escenarios UAS válidos: alimenta el selector por agente (cómo
+    // contesta cada uno a las llamadas entrantes).
+    uasScenariosCache = lista.filter((s) => !s.error && String(s.role).toLowerCase() === "uas");
   } catch (e) {
     sel.innerHTML = '<option value="">— error al listar —</option>';
   }

@@ -1,7 +1,44 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-06-26 (sesión 11: carga por ESCENARIO — punto 1 del próximo)
+Fecha: 2026-06-26 (sesión 12: escenarios UAS — el lado que CONTESTA, scriptado)
+
+## Sesión 12 — Escenarios UAS (runner del lado servidor, con temporización)
+- OBJETIVO (pedido del usuario): que el lado que CONTESTA (B) pueda seguir un guion
+  con su temporización: "cuando llega la llamada, esperar 500 ms y responder 180,
+  sonar 2 s y luego 200". Antes solo había escenarios UAC; el UAS contestaba con una
+  política FIJA (RingDelay+AnswerCode). Ahora el UAS es scriptable como en SIPp.
+- DISEÑO (respeta capas: sipcore NO importa runner/scenario):
+  - sipcore: UASPolicy gana `Script []UASStep` (tipo NEUTRO: UASPause/UASSendProvisional/
+    UASSendFinal/UASWaitBye/UASSendBye). Si hay Script, onInvite delega en runUASScript
+    (pausas + provisionales + final con media; el 2xx bloquea hasta el ACK). recv BYE
+    => UASWaitBye, coordinado con onBye vía byeWaiters[callID] (onBye cierra el canal).
+    SetUASPolicy ahora es SEGURO EN CALIENTE (uasMu RWMutex; onInvite toma copia).
+    serveCtx guardado en Serve para cancelar pausas al parar el agente. reasonFor
+    ampliado (100/180/183/4xx/5xx/6xx).
+  - runner: `BuildUASPolicy(sc) (sipcore.UASPolicy, error)` traduce un escenario role
+    uas al guion (recv INVITE=disparador; pause; send 1xx/2xx-6xx; recv ACK=implícito;
+    recv BYE=WaitBye; send BYE=SendBye). Valida que reciba INVITE y envíe una final.
+  - agent: SetUASScenario(name, pol)/ClearUASScenario()/UASScenario(); persiste entre
+    stop/start y se aplica en caliente. Info.uas_scenario expuesto a la web.
+  - webui: POST /api/agents/uas-scenario {agent_id, file} (file vacío = quitar). Carga
+    el YAML (anti path-traversal), exige role uas y traduce con runner.BuildUASPolicy.
+    UI: columna "UAS SCENARIO" en el panel 01 AGENTS con selector por agente
+    (— auto-answer — + escenarios uas); loadScenarios llena uasScenariosCache.
+- EJEMPLO: examples/scenarios/uas-lento.yaml (recv INVITE -> pause 500ms -> 180 ->
+  pause 2s -> 200 -> recv ACK -> recv BYE -> 200).
+- TESTS: internal/runner/uas_test.go TestUASScriptTiming (loopback: valida ORDEN y
+  TEMPORIZACIÓN de 180/200 y que recv BYE desbloquea). go test ./... en verde; el
+  test del runner usa puertos propios (35180/35181) y deja los servidores vivos para
+  no disparar el race conocido de sipgo al cerrar el listener (lo tiene también el
+  TestLlamadaLoopback de sipcore: es de la librería, no del proyecto).
+- VERIFICADO e2e (binario): web :8099 + agente B :5072 con uas-lento.yaml asignado;
+  A->B: en la TRAZA, 180 a +0.501s y 200 a +2.502s (clavado al guion); llamada
+  established con media; quitar el escenario vuelve al auto-answer; asignar un uac
+  se rechaza. Commit pendiente.
+- PRÓXIMO posible: reason custom por paso; save/match reales (capturas y validaciones
+  sobre el mensaje); CSV inject; o seguir con Fase 5.3/5.4/Wails.
+
 
 ## Sesión 11 — Carga que ejecuta un ESCENARIO por llamada (estilo SIPp)
 - OBJETIVO (era el "PRÓXIMO" de la sesión 10): que el motor de carga establezca cada
