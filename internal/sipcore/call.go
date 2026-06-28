@@ -254,6 +254,50 @@ func (call *UACCall) Refer(ctx context.Context, referTo string) (Result, error) 
 	return Result{Code: int(res.StatusCode), Reason: res.Reason, RTT: rtt}, nil
 }
 
+// Reinvite envía un re-INVITE dentro del diálogo para renegociar la media (HOLD con
+// a=inactive, RESUME con a=sendrecv). sdp es el nuevo cuerpo de oferta. Como con
+// Refer, fijamos el Request-URI al contacto remoto; sipgo añade From/To/Call-ID/CSeq
+// del diálogo. Tras un 2xx enviamos el ACK manualmente (sipgo.Do no lo manda para
+// INVITE): lo construimos al contacto remoto y lo enviamos por el diálogo, que le
+// asigna el mismo CSeq que el re-INVITE (RFC 3261 §13.2.2.4). Devuelve la respuesta.
+func (call *UACCall) Reinvite(ctx context.Context, sdp []byte) (Result, error) {
+	// Request-URI = contacto remoto del 200 OK (o, en su defecto, el del INVITE).
+	recipient := call.remoteTarget()
+
+	req := sip.NewRequest(sip.INVITE, recipient)
+	req.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
+	req.SetBody(sdp)
+
+	start := time.Now()
+	res, err := call.session.Do(ctx, req)
+	rtt := time.Since(start)
+	if err != nil {
+		return Result{RTT: rtt}, err
+	}
+
+	// El re-INVITE 2xx exige ACK end-to-end (separado de la transacción). Lo enviamos
+	// al contacto remoto; el diálogo le pone el CSeq correcto (mismo nº, método ACK).
+	if res.StatusCode >= 200 && res.StatusCode < 300 {
+		ack := sip.NewRequest(sip.ACK, recipient)
+		if err := call.session.WriteRequest(ack); err != nil {
+			return Result{Code: int(res.StatusCode), Reason: res.Reason, RTT: rtt},
+				fmt.Errorf("enviando ACK del re-INVITE: %w", err)
+		}
+	}
+	return Result{Code: int(res.StatusCode), Reason: res.Reason, RTT: rtt}, nil
+}
+
+// remoteTarget devuelve la URI a la que dirigir una petición in-dialog: el contacto
+// anunciado en el 200 OK y, si no lo hubiera, el destino del INVITE original.
+func (call *UACCall) remoteTarget() sip.Uri {
+	if call.session.InviteResponse != nil {
+		if contact := call.session.InviteResponse.Contact(); contact != nil {
+			return contact.Address
+		}
+	}
+	return call.session.InviteRequest.Recipient
+}
+
 // normalizeReferTo asegura que el valor de Refer-To sea una URI SIP entre <>.
 func normalizeReferTo(v string) string {
 	v = strings.TrimSpace(v)
@@ -287,11 +331,11 @@ type UASPolicy struct {
 type UASStepKind int
 
 const (
-	UASPause            UASStepKind = iota // esperar Dur
-	UASSendProvisional                     // enviar respuesta 1xx (Code/Reason)
-	UASSendFinal                           // enviar respuesta final (2xx con media si procede; 3xx-6xx = rechazo)
-	UASWaitBye                             // esperar el BYE remoto (el otro extremo cuelga)
-	UASSendBye                             // colgar nosotros (enviar BYE)
+	UASPause           UASStepKind = iota // esperar Dur
+	UASSendProvisional                    // enviar respuesta 1xx (Code/Reason)
+	UASSendFinal                          // enviar respuesta final (2xx con media si procede; 3xx-6xx = rechazo)
+	UASWaitBye                            // esperar el BYE remoto (el otro extremo cuelga)
+	UASSendBye                            // colgar nosotros (enviar BYE)
 )
 
 // UASStep es un paso del guion de respuesta del UAS. Es un tipo NEUTRO (sin saber
@@ -379,6 +423,15 @@ func (c *Core) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 		entrante = append(entrante, "pai", pai.Value())
 	}
 	c.log.Info("llamada entrante", entrante...)
+
+	// re-INVITE (INVITE in-dialog, ya con tag en el To): renegociación de media de una
+	// llamada YA establecida (HOLD/RESUME del otro extremo). No es una llamada nueva:
+	// no hay 180 ni guion; contestamos 200 con un SDP que refleja la dirección pedida y
+	// ajustamos nuestra emisión. La media (puerto RTP) se conserva.
+	if to := req.To(); to != nil && to.Params.Has("tag") {
+		c.handleReInvite(req, tx)
+		return
+	}
 
 	// Copia de la política vigente (la web puede cambiarla en caliente). Las llamadas
 	// en curso usan la foto que tomaron aquí; las nuevas, la política nueva.

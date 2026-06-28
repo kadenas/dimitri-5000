@@ -47,6 +47,38 @@ func TestParseRealAnswer(t *testing.T) {
 	}
 }
 
+// TestDirectionRoundTrip valida que la dirección (HOLD/RESUME) se escribe en el SDP
+// y se vuelve a leer correctamente: la oferta por defecto es sendrecv; el HOLD usa
+// inactive y se parsea como tal.
+func TestDirectionRoundTrip(t *testing.T) {
+	// Oferta normal: sendrecv.
+	d, err := Parse(BuildOffer("192.168.1.5", 40000))
+	if err != nil {
+		t.Fatalf("Parse oferta: %v", err)
+	}
+	if d.Dir != DirSendRecv {
+		t.Errorf("dir oferta = %q, se esperaba sendrecv", d.Dir)
+	}
+
+	// Re-INVITE de HOLD: inactive.
+	d2, err := Parse(BuildOfferDir("192.168.1.5", 40000, DirInactive))
+	if err != nil {
+		t.Fatalf("Parse oferta hold: %v", err)
+	}
+	if d2.Dir != DirInactive {
+		t.Errorf("dir hold = %q, se esperaba inactive", d2.Dir)
+	}
+
+	// Respuesta con dirección explícita.
+	d3, err := Parse(BuildAnswerDir("10.0.0.1", 18000, PayloadPCMA, DirSendOnly))
+	if err != nil {
+		t.Fatalf("Parse respuesta: %v", err)
+	}
+	if d3.Dir != DirSendOnly {
+		t.Errorf("dir respuesta = %q, se esperaba sendonly", d3.Dir)
+	}
+}
+
 func TestParseNoAudio(t *testing.T) {
 	if _, err := Parse([]byte("v=0\r\nc=IN IP4 1.2.3.4\r\n")); err == nil {
 		t.Fatal("se esperaba error: SDP sin m=audio")

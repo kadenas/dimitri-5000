@@ -223,6 +223,7 @@ main { padding: 24px 28px 60px; width: 100%; max-width: 1280px; margin: auto; }
 .s-ended { color: var(--ended); }
 .s-unknown, .s-stopped { color: var(--muted); }
 .s-running { color: var(--up); }
+.s-hold { color: var(--ringing); }
 
 /* Botones pequeños de acción (agentes) dentro de la tabla */
 .btn-mini {

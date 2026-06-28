@@ -37,6 +37,7 @@ type Description struct {
 	Port    int     // puerto de la m=audio (0 = media en espera, sin RTP)
 	Formats []uint8 // payload types anunciados en la m=audio
 	PTime   int     // a=ptime en ms (0 si no se indica)
+	Dir     string  // dirección a= (sendrecv|sendonly|recvonly|inactive); "" = no indicada
 }
 
 // HasPayload indica si el SDP anunció ese payload type.
@@ -49,20 +50,46 @@ func (d Description) HasPayload(pt uint8) bool {
 	return false
 }
 
+// Direcciones de media (RFC 4566 a=). sendrecv es lo normal; sendonly/inactive se
+// usan para el HOLD (re-INVITE): inactive = ni envío ni recibo (nuestro caso, sin
+// música de espera); sendonly = solo envío (con música de espera).
+const (
+	DirSendRecv = "sendrecv"
+	DirSendOnly = "sendonly"
+	DirInactive = "inactive"
+)
+
 // BuildOffer construye una oferta SDP de audio ofreciendo G.711 µ-law y A-law en
-// la IP:puerto locales donde escucha nuestra sesión RTP.
+// la IP:puerto locales donde escucha nuestra sesión RTP (dirección sendrecv).
 func BuildOffer(ip string, port int) []byte {
-	return buildSDP(ip, port, []uint8{PayloadPCMU, PayloadPCMA})
+	return BuildOfferDir(ip, port, DirSendRecv)
 }
 
-// BuildAnswer construye una respuesta SDP aceptando UN códec (el negociado).
+// BuildOfferDir es como BuildOffer pero con la dirección indicada (sendrecv para la
+// oferta inicial; inactive/sendonly para el re-INVITE de HOLD).
+func BuildOfferDir(ip string, port int, dir string) []byte {
+	return buildSDP(ip, port, []uint8{PayloadPCMU, PayloadPCMA}, dir)
+}
+
+// BuildAnswer construye una respuesta SDP aceptando UN códec (el negociado), con
+// dirección sendrecv.
 func BuildAnswer(ip string, port int, pt uint8) []byte {
-	return buildSDP(ip, port, []uint8{pt})
+	return buildSDP(ip, port, []uint8{pt}, DirSendRecv)
 }
 
-// buildSDP arma el cuerpo SDP con los payloads dados. El primero de la lista marca
-// la preferencia. Líneas terminadas en CRLF, como exige SIP para los cuerpos.
-func buildSDP(ip string, port int, pts []uint8) []byte {
+// BuildAnswerDir es como BuildAnswer pero con la dirección indicada (para responder
+// a un re-INVITE de HOLD reflejando el estado: inactive/recvonly según corresponda).
+func BuildAnswerDir(ip string, port int, pt uint8, dir string) []byte {
+	return buildSDP(ip, port, []uint8{pt}, dir)
+}
+
+// buildSDP arma el cuerpo SDP con los payloads dados y la dirección dada. El primero
+// de la lista marca la preferencia. Si dir está vacía se usa sendrecv. Líneas
+// terminadas en CRLF, como exige SIP para los cuerpos.
+func buildSDP(ip string, port int, pts []uint8, dir string) []byte {
+	if dir == "" {
+		dir = DirSendRecv
+	}
 	fmtList := make([]string, len(pts))
 	for i, pt := range pts {
 		fmtList[i] = strconv.Itoa(int(pt))
@@ -78,7 +105,7 @@ func buildSDP(ip string, port int, pts []uint8) []byte {
 		fmt.Fprintf(&b, "a=rtpmap:%d %s/8000\r\n", pt, CodecName(pt))
 	}
 	b.WriteString("a=ptime:20\r\n")
-	b.WriteString("a=sendrecv\r\n")
+	fmt.Fprintf(&b, "a=%s\r\n", dir)
 	return b.Bytes()
 }
 
@@ -124,6 +151,13 @@ func Parse(sdp []byte) (Description, error) {
 		case inAudio && strings.HasPrefix(line, "a=ptime:"):
 			if n, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "a=ptime:"))); err == nil {
 				d.PTime = n
+			}
+		case strings.HasPrefix(line, "a=sendrecv"), strings.HasPrefix(line, "a=sendonly"),
+			strings.HasPrefix(line, "a=recvonly"), strings.HasPrefix(line, "a=inactive"):
+			// Dirección de la media (HOLD/RESUME). Vale a nivel de sesión o de media;
+			// la de la sección de audio manda si aparece.
+			if d.Dir == "" || inAudio {
+				d.Dir = strings.TrimSpace(strings.TrimPrefix(line, "a="))
 			}
 		}
 	}

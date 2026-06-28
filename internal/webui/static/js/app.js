@@ -330,7 +330,7 @@ function renderCalls(datos) {
       "<td>" + esc(c.agent_id) + "</td>" +
       "<td>" + esc(c.id) + "</td>" +
       "<td>" + esc(c.to) + "</td>" +
-      "<td>" + badge(c.state) + "</td>" +
+      "<td>" + badge(c.state) + (c.on_hold ? ' <span class="badge s-hold">ON HOLD</span>' : "") + "</td>" +
       "<td>" + esc(codeText(c.last_code, c.last_reason)) + "</td>" +
       "<td>" + hhmmss(c.started_at) + "</td>" +
       "<td>" + hhmmss(c.answered_at) + "</td>" +
@@ -814,6 +814,24 @@ document.getElementById("btn-hangup").addEventListener("click", () => {
   if (!selectedCallId) return;
   hangup(selectedCallId).then(refresh);
 });
+document.getElementById("btn-hold").addEventListener("click", () => callAction("/api/call/hold"));
+document.getElementById("btn-resume").addEventListener("click", () => callAction("/api/call/resume"));
+
+// callAction lanza una acción sobre la llamada seleccionada (hold/resume) y refresca.
+async function callAction(url) {
+  if (!selectedCallId) {
+    alert("Selecciona primero una llamada (clic en su fila).");
+    return;
+  }
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: selectedCallId }),
+  });
+  if (!res.ok) alert("Error: " + (await res.text()));
+  refresh();
+}
+
 document.getElementById("btn-xfer").addEventListener("click", async () => {
   if (!selectedCallId) {
     alert("Selecciona primero una llamada (clic en su fila).");

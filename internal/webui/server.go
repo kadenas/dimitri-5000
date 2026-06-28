@@ -84,6 +84,8 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/call", s.handlePlaceCall)         // POST: lanzar una llamada
 	mux.HandleFunc("/api/call/hangup", s.handleHangup)     // POST: colgar una llamada
 	mux.HandleFunc("/api/call/transfer", s.handleTransfer) // POST: desviar (REFER)
+	mux.HandleFunc("/api/call/hold", s.handleHold)         // POST: poner en espera (re-INVITE inactive)
+	mux.HandleFunc("/api/call/resume", s.handleResume)     // POST: reanudar (re-INVITE sendrecv)
 
 	// API de mensajería SIP (MESSAGE).
 	mux.HandleFunc("/api/messages", s.handleMessages)   // GET: enviados y recibidos
@@ -1081,6 +1083,49 @@ func (s *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.Error(w, "llamada no encontrada o no establecida", http.StatusNotFound)
+}
+
+// handleHold pone una llamada en espera (re-INVITE a=inactive). handleResume la
+// reanuda (a=sendrecv). Buscan el id en todos los agentes y actúan en el que la tenga.
+func (s *Server) handleHold(w http.ResponseWriter, r *http.Request)   { s.handleReinvite(w, r, true) }
+func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) { s.handleReinvite(w, r, false) }
+
+// handleReinvite implementa hold/resume: localiza la llamada por id y lanza el
+// re-INVITE correspondiente en su agente.
+func (s *Server) handleReinvite(w http.ResponseWriter, r *http.Request, hold bool) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "usa POST", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.manager == nil {
+		http.Error(w, "gestor de agentes no disponible", http.StatusServiceUnavailable)
+		return
+	}
+	id, ok := s.decodeID(w, r)
+	if !ok {
+		return
+	}
+	for _, info := range s.manager.Snapshot() {
+		a := s.manager.Get(info.ID)
+		if a == nil {
+			continue
+		}
+		ctrl := a.Control()
+		if ctrl == nil {
+			continue
+		}
+		applied := false
+		if hold {
+			applied = ctrl.Hold(id)
+		} else {
+			applied = ctrl.Resume(id)
+		}
+		if applied {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+	}
+	http.Error(w, "llamada no encontrada o sin media para renegociar", http.StatusNotFound)
 }
 
 // handleHangup cuelga una llamada en curso. Busca el id en todos los agentes.

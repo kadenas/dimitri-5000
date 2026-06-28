@@ -1,7 +1,51 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-06-26 (sesión 12: escenarios UAS — el lado que CONTESTA, scriptado)
+Fecha: 2026-06-28 (sesión 13: Fase 5.4 — HOLD/RESUME real con re-INVITE)
+
+## Sesión 13 — Fase 5.4: HOLD/RESUME real (re-INVITE)
+- DECISIÓN: Fase 5.3 (grabar RTP a WAV / oír en el navegador) DESCARTADA por el
+  usuario: para capturar/oír RTP se usan herramientas externas (sngrep/Wireshark).
+- OBJETIVO: poner una llamada establecida en espera y reanudarla, con señalización
+  in-dialog real (re-INVITE), activando los botones HOLD/RESUME que estaban inertes.
+- DECISIÓN de protocolo: HOLD = re-INVITE con `a=inactive` (no `sendonly`), porque
+  no enviamos música de espera y además PARAMOS la emisión de RTP; inactive es lo
+  coherente. RESUME = `a=sendrecv`. La función de SDP acepta la dirección como
+  parámetro, así MoH con sendonly sería trivial en el futuro.
+- CAMBIOS (mínimos, por capas; sipcore sigue siendo la única capa que habla SIP):
+  - media/sdp.go: dirección parametrizable. BuildOfferDir/BuildAnswerDir + constantes
+    DirSendRecv/DirSendOnly/DirInactive; BuildOffer/BuildAnswer siguen en sendrecv.
+    Parse ahora lee la línea a=... a Description.Dir (sesión o media; la de media manda).
+  - media/session.go: Session.SetSending(bool) pausa/reanuda la EMISIÓN en caliente
+    (flag sendMute bajo mutex). En HOLD el bucle salta el envío pero avanza el
+    timestamp (el reloj no se detiene) y NO el seq (contiguo a lo enviado); recepción
+    y métricas intactas.
+  - sipcore/call.go: UACCall.Reinvite(ctx, sdp) envía un re-INVITE in-dialog (Do) y,
+    tras el 2xx, manda el ACK manualmente (sipgo.Do no lo hace): el diálogo le asigna
+    el mismo CSeq que el re-INVITE. Helper remoteTarget() (contacto remoto del 200).
+  - sipcore/call.go onInvite: detecta el re-INVITE (INVITE in-dialog = To con tag) y
+    lo deriva a handleReInvite SIN 180 ni guion (no es llamada nueva).
+  - sipcore/media.go handleReInvite: reutiliza la sesión de media de ese Call-ID
+    (MISMO puerto RTP), refleja la dirección (mirrorDir: sendonly<->recvonly), ajusta
+    SetSending (para en inactive/sendonly) y responde 200 + SDP. lookupMediaSession.
+  - control/control.go: Hold(id)/Resume(id) -> reinvite(id,hold): regenera la oferta
+    sobre el mismo puerto local, lanza Reinvite en goroutine y, si 2xx, ajusta
+    SetSending y CallRec.OnHold. Nuevo campo OnHold (json on_hold).
+  - webui/server.go: POST /api/call/hold y /api/call/resume (handleReinvite común,
+    busca el id en todos los agentes). webui/static: botones HOLD/RESUME habilitados
+    + callAction() en app.js; badge "ON HOLD" en la tabla CALLS (css .s-hold).
+- TESTS: media/sdp_test.go TestDirectionRoundTrip (sendrecv/inactive/sendonly ida y
+  vuelta). go build/vet/test ./... en verde.
+- VERIFICADO e2e (binario, loopback): web :8099 + default :5070 -> uac-2 :5072.
+  Llamada established, RTP 103/103 0 pérdida. HOLD: HTTP 204, on_hold=true, "re-INVITE
+  OK", tx/rx CONGELADOS (ambos extremos paran con inactive), mismo puerto RTP 62234.
+  RESUME: on_hold=false, tx vuelve a crecer (518->621->724), 0 pérdida. Log limpio:
+  "re-INVITE contestado dir=inactive" y "dir=sendrecv". Commit pendiente.
+- PRÓXIMO posible: validar HOLD contra Asterisk/SBC real; Fase 5.4 sobre el lado UAS
+  (que NOSOTROS pongamos en hold una llamada ENTRANTE — hoy solo originamos HOLD desde
+  el UAC saliente); o seguir con runner (reason/save/match/CSV) o G3 (Wails).
+
+## Sesión 12 — Escenarios UAS (runner del lado servidor, con temporización)
 
 ## Sesión 12 — Escenarios UAS (runner del lado servidor, con temporización)
 - OBJETIVO (pedido del usuario): que el lado que CONTESTA (B) pueda seguir un guion

@@ -49,9 +49,10 @@ type Session struct {
 	ptime int    // ms por trama (fijado en Start)
 	src   Source // audio que enviamos (tono por defecto; WAV subido si se fija)
 
-	mu     sync.Mutex
-	remote *net.UDPAddr
-	codec  string
+	mu       sync.Mutex
+	remote   *net.UDPAddr
+	codec    string
+	sendMute bool // true en HOLD: el bucle de envío salta la emisión de RTP
 
 	// Métricas y contabilidad de recepción (protegidas por mu).
 	txPackets, txBytes uint64
@@ -106,6 +107,16 @@ func (s *Session) SetSource(src Source) {
 	}
 }
 
+// SetSending activa o pausa la emisión de RTP en caliente. En HOLD (sending=false)
+// el bucle de envío sigue vivo pero no emite paquetes (coherente con anunciar
+// a=inactive); RESUME (sending=true) reanuda la emisión. La recepción y las
+// métricas no se ven afectadas.
+func (s *Session) SetSending(sending bool) {
+	s.mu.Lock()
+	s.sendMute = !sending
+	s.mu.Unlock()
+}
+
 // Start fija el destino y el códec negociados y lanza los bucles de envío y
 // recepción. ptime<=0 usa 20 ms. Debe llamarse una sola vez, tras negociar el SDP.
 func (s *Session) Start(ctx context.Context, remoteIP string, remotePort int, pt uint8, ptime int) error {
@@ -152,6 +163,18 @@ func (s *Session) sendLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// En HOLD no emitimos: avanzamos el timestamp para reflejar el tiempo
+			// transcurrido (el reloj de muestreo no se detiene), pero NO el número de
+			// secuencia (es contiguo a los paquetes realmente enviados). Así, al
+			// reanudar, el RTP continúa con seq+1 y un timestamp coherente.
+			s.mu.Lock()
+			muted := s.sendMute
+			s.mu.Unlock()
+			if muted {
+				ts += uint32(samplesPerFrame)
+				continue
+			}
+
 			s.src.NextFrame(frame)
 			for i := 0; i < samplesPerFrame; i++ {
 				payload[i] = encode(frame[i])

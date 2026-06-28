@@ -48,6 +48,11 @@ type CallRec struct {
 	AnsweredAt string `json:"answered_at,omitempty"`
 	EndedAt    string `json:"ended_at,omitempty"`
 
+	// OnHold indica si la llamada está en espera (HOLD): se anunció a=inactive por
+	// re-INVITE y el envío de RTP está pausado. La web lo muestra y conmuta los
+	// botones HOLD/RESUME.
+	OnHold bool `json:"on_hold"`
+
 	// Media (RTP) negociada para esta llamada. Se rellena en cada Snapshot con las
 	// métricas en vivo (tx/rx, pérdida, jitter); nil si la llamada no tiene audio.
 	Media *media.Metrics `json:"media,omitempty"`
@@ -477,6 +482,66 @@ func (c *Controller) Transfer(id, referTo string) bool {
 			r.LastCode = res.Code
 			r.LastReason = "REFER " + res.Reason
 		})
+	}()
+	return true
+}
+
+// Hold pone una llamada establecida en espera: re-INVITE con a=inactive y pausa del
+// envío de RTP. Resume la reactiva (a=sendrecv y reanuda el envío). Devuelven false
+// si la llamada no existe o no tiene media (no se puede renegociar). El resultado
+// del re-INVITE se refleja en LastCode/LastReason.
+func (c *Controller) Hold(id string) bool   { return c.reinvite(id, true) }
+func (c *Controller) Resume(id string) bool { return c.reinvite(id, false) }
+
+// reinvite implementa Hold (hold=true) y Resume (hold=false): regenera el SDP con la
+// dirección adecuada sobre el MISMO puerto RTP local, envía el re-INVITE in-dialog y,
+// si el otro extremo lo acepta (2xx), ajusta la emisión de RTP y el estado OnHold.
+func (c *Controller) reinvite(id string, hold bool) bool {
+	c.mu.Lock()
+	rec, ok := c.calls[id]
+	var call *sipcore.UACCall
+	var sess *media.Session
+	if ok {
+		call = rec.call
+		sess = rec.mediaSess
+	}
+	c.mu.Unlock()
+	if !ok || call == nil || sess == nil {
+		return false // sin llamada viva o sin media que renegociar
+	}
+
+	// Nueva oferta SDP sobre el mismo socket RTP: inactive para HOLD, sendrecv para RESUME.
+	dir := media.DirSendRecv
+	if hold {
+		dir = media.DirInactive
+	}
+	offer := media.BuildOfferDir(c.core.LocalIP(), sess.LocalPort(), dir)
+
+	go func() {
+		ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+		defer cancel()
+		res, err := call.Reinvite(ctx, offer)
+		if err != nil {
+			c.log.Warn("re-INVITE (HOLD/RESUME) falló", "id", id, "hold", hold, "error", err)
+			c.update(rec, func(r *CallRec) { r.LastReason = "re-INVITE: " + err.Error() })
+			return
+		}
+		if res.Code < 200 || res.Code >= 300 {
+			c.log.Warn("re-INVITE rechazado", "id", id, "hold", hold, "code", res.Code)
+			c.update(rec, func(r *CallRec) {
+				r.LastCode = res.Code
+				r.LastReason = "re-INVITE " + res.Reason
+			})
+			return
+		}
+		// Aceptado: ajustamos la emisión de RTP y el estado.
+		sess.SetSending(!hold)
+		c.update(rec, func(r *CallRec) {
+			r.OnHold = hold
+			r.LastCode = res.Code
+			r.LastReason = "re-INVITE " + res.Reason
+		})
+		c.log.Info("re-INVITE aceptado", "id", id, "hold", hold, "code", res.Code)
 	}()
 	return true
 }

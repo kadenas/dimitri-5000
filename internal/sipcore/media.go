@@ -86,6 +86,71 @@ func (c *Core) answerWithMedia(req *sip.Request, dlg *sipgo.DialogServerSession)
 	return true
 }
 
+// handleReInvite responde a un re-INVITE in-dialog (HOLD/RESUME del otro extremo).
+// Reutiliza la sesión de media existente de ese Call-ID (mismo puerto RTP), refleja
+// la dirección pedida en el SDP de respuesta y ajusta nuestra emisión. Si no hay
+// media previa (caso raro), contesta 200 sin cuerpo para no romper el diálogo.
+func (c *Core) handleReInvite(req *sip.Request, tx sip.ServerTransaction) {
+	id := callIDOf(req)
+	sess := c.lookupMediaSession(id)
+
+	// Dirección solicitada por el otro extremo (a= de la oferta). Vacía = sendrecv.
+	dir := media.DirSendRecv
+	pt := uint8(media.PayloadPCMU)
+	if offer := req.Body(); len(offer) > 0 {
+		if desc, err := media.Parse(offer); err == nil {
+			if desc.Dir != "" {
+				dir = desc.Dir
+			}
+			if p, ok := media.ChooseCodec(desc); ok {
+				pt = p
+			}
+		}
+	}
+
+	if sess == nil {
+		c.log.Warn("re-INVITE sin media previa; contesto 200 sin SDP", "call-id", id)
+		_ = tx.Respond(sip.NewResponseFromRequest(req, 200, "OK", nil))
+		return
+	}
+
+	// Reflejamos la dirección: inactive/sendrecv se devuelven igual; sendonly<->recvonly
+	// se invierten (lo que el otro envía nosotros lo recibimos y viceversa).
+	answerDir := mirrorDir(dir)
+	// Enviamos RTP salvo que el otro nos haya puesto en espera (inactive) o solo quiera
+	// enviar sin recibir (sendonly).
+	sess.SetSending(dir != media.DirInactive && dir != media.DirSendOnly)
+
+	answer := media.BuildAnswerDir(c.bindIP, sess.LocalPort(), pt, answerDir)
+	res := sip.NewResponseFromRequest(req, 200, "OK", answer)
+	res.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
+	res.AppendHeader(&c.contact)
+	if err := tx.Respond(res); err != nil {
+		c.log.Error("respondiendo re-INVITE", "error", err)
+		return
+	}
+	c.log.Info("re-INVITE contestado", "call-id", id, "dir", dir)
+}
+
+// mirrorDir devuelve la dirección a anunciar en la respuesta SDP frente a la ofertada.
+func mirrorDir(dir string) string {
+	switch dir {
+	case media.DirSendOnly:
+		return "recvonly"
+	case "recvonly":
+		return media.DirSendOnly
+	default: // sendrecv, inactive
+		return dir
+	}
+}
+
+// lookupMediaSession devuelve la sesión de media viva de un Call-ID (nil si no hay).
+func (c *Core) lookupMediaSession(id string) *media.Session {
+	c.mediaMu.Lock()
+	defer c.mediaMu.Unlock()
+	return c.mediaSess[id]
+}
+
 // callIDOf extrae el Call-ID de un mensaje SIP (clave de la sesión de media).
 func callIDOf(msg sip.Message) string {
 	if h := msg.CallID(); h != nil {
