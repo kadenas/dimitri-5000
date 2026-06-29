@@ -274,9 +274,24 @@ main { padding: 24px 28px 60px; width: 100%; max-width: 1280px; margin: auto; }
 }
 .field textarea:focus { border-color: var(--acid); }
 
-/* Panel de mensajería SIP */
-.msg-compose { flex-wrap: wrap; }
-.msg-grid { margin-top: 14px; }
+/* ---- Visor de trazas SIP tipo SBC (panel 05) ---- */
+.trace-grid { margin-top: 14px; table-layout: fixed; }
+.trace-grid td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+  font-size: 12px;
+}
+.trace-row { cursor: pointer; }
+.trace-row:hover { background: #161616; }
+.trace-row.sel { background: #1d2400; }            /* fila seleccionada */
+.trace-row.sel td { color: var(--ink); }
+/* Colores de estado, mimetizando el visor de un SBC */
+.trace-grid .st-estab  { color: var(--up); font-weight: 700; }
+.trace-grid .st-failed { color: var(--down); font-weight: 700; }
+.trace-grid .st-term   { color: var(--dialing); font-weight: 700; }
+.trace-grid .st-early  { color: var(--ringing); font-weight: 700; }
+.trace-grid .st-dim    { color: var(--muted); }
 
 /* Panel de escenarios (Fase 2) */
 .scenario-grid { margin-top: 14px; }

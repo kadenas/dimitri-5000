@@ -16,8 +16,10 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -86,10 +88,6 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/call/transfer", s.handleTransfer) // POST: desviar (REFER)
 	mux.HandleFunc("/api/call/hold", s.handleHold)         // POST: poner en espera (re-INVITE inactive)
 	mux.HandleFunc("/api/call/resume", s.handleResume)     // POST: reanudar (re-INVITE sendrecv)
-
-	// API de mensajería SIP (MESSAGE).
-	mux.HandleFunc("/api/messages", s.handleMessages)   // GET: enviados y recibidos
-	mux.HandleFunc("/api/message", s.handleSendMessage) // POST: enviar un MESSAGE
 
 	// API de media: audio (WAV) que el agente envía por RTP en vez del tono.
 	mux.HandleFunc("/api/media", s.handleMedia)            // GET estado | POST subir WAV
@@ -717,13 +715,34 @@ func (s *Server) handleLoadStop(w http.ResponseWriter, r *http.Request) {
 
 // --- Traza SIP (ladder) ------------------------------------------------------
 
-// handleTraceCalls devuelve el resumen de llamadas presentes en la traza.
+// handleTraceCalls devuelve el resumen de llamadas presentes en la traza,
+// etiquetando cada extremo (laddr/raddr) con el agente que le corresponde para
+// el visor tipo SBC del panel 06.
 func (s *Server) handleTraceCalls(w http.ResponseWriter, r *http.Request) {
 	if s.trace == nil {
 		s.writeJSON(w, []any{})
 		return
 	}
-	s.writeJSON(w, s.trace.Calls())
+	calls := s.trace.Calls()
+
+	// Mapa "ip:puerto" -> nombre de agente, para resolver origen/destino.
+	byAddr := map[string]string{}
+	if s.manager != nil {
+		for _, info := range s.manager.Snapshot() {
+			name := info.Name
+			if name == "" {
+				name = info.ID
+			}
+			byAddr[net.JoinHostPort(info.BindIP, strconv.Itoa(info.SIPPort))] = name
+		}
+	}
+	for i := range calls {
+		// El extremo local (laddr) es siempre uno de nuestros agentes.
+		calls[i].OrigAgent = byAddr[calls[i].Laddr]
+		// El remoto puede ser otro agente local (loopback) o externo.
+		calls[i].DestAgent = byAddr[calls[i].Raddr]
+	}
+	s.writeJSON(w, calls)
 }
 
 // handleTrace devuelve los eventos: de una llamada (?call_id=) o todos.
@@ -843,117 +862,6 @@ func (s *Server) handleScenarioRuns(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.writeJSON(w, out)
-}
-
-// --- Mensajería SIP (MESSAGE) ------------------------------------------------
-
-// messageView es un mensaje etiquetado con el agente que lo gestiona.
-type messageView struct {
-	AgentID string `json:"agent_id"`
-	control.MessageRec
-}
-
-// handleMessages agrega los mensajes (enviados y recibidos) de todos los agentes.
-func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
-	out := make([]messageView, 0)
-	if s.manager != nil {
-		for _, info := range s.manager.Snapshot() {
-			a := s.manager.Get(info.ID)
-			if a == nil {
-				continue
-			}
-			ctrl := a.Control()
-			if ctrl == nil {
-				continue
-			}
-			for _, m := range ctrl.MessagesSnapshot() {
-				out = append(out, messageView{AgentID: info.ID, MessageRec: m})
-			}
-		}
-	}
-	s.writeJSON(w, out)
-}
-
-// sendMessageReq es el cuerpo JSON para enviar un MESSAGE.
-type sendMessageReq struct {
-	AgentID     string            `json:"agent_id"`
-	To          string            `json:"to"`        // modo simple: URI completa
-	DestHost    string            `json:"dest_host"` // modo enriquecido
-	DestPort    int               `json:"dest_port"`
-	FromUser    string            `json:"from_user"`
-	FromDomain  string            `json:"from_domain"`
-	FromDisplay string            `json:"from_display"`
-	ToUser      string            `json:"to_user"`
-	ToDomain    string            `json:"to_domain"`
-	Body        string            `json:"body"`
-	Headers     map[string]string `json:"headers"`
-}
-
-// handleSendMessage envía un MESSAGE desde el agente indicado.
-func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "usa POST", http.StatusMethodNotAllowed)
-		return
-	}
-	var req sendMessageReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "JSON inválido", http.StatusBadRequest)
-		return
-	}
-	if req.Body == "" {
-		http.Error(w, "el mensaje no puede ir vacío (body)", http.StatusBadRequest)
-		return
-	}
-
-	spec := sipcore.MessageSpec{
-		DestHost:    req.DestHost,
-		DestPort:    req.DestPort,
-		FromUser:    req.FromUser,
-		FromDomain:  req.FromDomain,
-		FromDisplay: req.FromDisplay,
-		ToUser:      req.ToUser,
-		ToDomain:    req.ToDomain,
-		Body:        req.Body,
-		Headers:     req.Headers,
-	}
-
-	// Destino: enriquecido o parseado de la URI simple 'to'.
-	if spec.DestHost == "" {
-		if req.To == "" {
-			http.Error(w, "indica un destino: 'to' (URI) o 'dest_host'", http.StatusBadRequest)
-			return
-		}
-		host, port, user, err := sipcore.SplitURI(req.To)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		spec.DestHost = host
-		spec.DestPort = port
-		if spec.ToUser == "" {
-			spec.ToUser = user
-		}
-	}
-	if spec.DestPort == 0 {
-		spec.DestPort = 5060
-	}
-
-	display := req.To
-	if display == "" {
-		if spec.ToUser != "" {
-			display = "sip:" + spec.ToUser + "@" + spec.DestHost
-		} else {
-			display = "sip:" + spec.DestHost
-		}
-	}
-
-	ctrl := s.controlFor(req.AgentID)
-	if ctrl == nil {
-		http.Error(w, "agente no disponible o parado", http.StatusServiceUnavailable)
-		return
-	}
-	id := ctrl.SendMessage(spec, display)
-	s.writeJSON(w, map[string]string{"id": id})
 }
 
 // --- Media (audio que se envía por RTP) --------------------------------------

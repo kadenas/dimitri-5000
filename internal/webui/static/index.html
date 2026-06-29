@@ -244,65 +244,30 @@
       <div class="hint" id="trunk-hint">Cada trunk se prueba con OPTIONS desde el agente elegido (origen = su puerto).</div>
     </section>
 
-    <!-- Bloque: mensajería SIP (MESSAGE) -->
+    <!-- Bloque: visor de trazas SIP tipo SBC (tabla de diálogos + ladder de detalle) -->
     <section class="block">
-      <h2 class="block-title"><span class="idx">05</span> MESSAGES</h2>
-      <form id="msg-form" class="panel control msg-compose">
-        <label class="field">
-          <span>FROM&nbsp;AGENT</span>
-          <select id="msg-agent"></select>
-        </label>
-        <label class="field">
-          <span>TO&nbsp;AGENT</span>
-          <select id="msg-to-agent"></select>
-        </label>
-        <label class="field">
-          <span>TO&nbsp;URI&nbsp;(manual)</span>
-          <input type="text" id="msg-to" placeholder="sip:2000@sbc" autocomplete="off" />
-        </label>
-        <label class="field">
-          <span>FROM&nbsp;USER</span>
-          <input type="text" id="msg-from-user" placeholder="1000" autocomplete="off" />
-        </label>
-        <label class="field">
-          <span>TO&nbsp;USER</span>
-          <input type="text" id="msg-to-user" placeholder="2000" autocomplete="off" />
-        </label>
-        <label class="field grow">
-          <span>MESSAGE</span>
-          <input type="text" id="msg-body" placeholder="Texto del mensaje" autocomplete="off" />
-        </label>
-        <button type="submit" class="btn-dial">SEND ▸</button>
-      </form>
-      <div class="hint" id="msg-hint">MESSAGE (RFC 3428): mensajería instantánea entre agentes o hacia un SBC.</div>
-
-      <table class="grid msg-grid">
-        <thead>
-          <tr>
-            <th>DIR</th><th>AGENT</th><th>PEER</th><th>MESSAGE</th>
-            <th>CODE</th><th>TIME</th>
-          </tr>
-        </thead>
-        <tbody id="messages">
-          <tr class="empty"><td colspan="6">NO MESSAGES</td></tr>
-        </tbody>
-      </table>
-    </section>
-
-    <!-- Bloque: traza SIP en diagrama de escalera -->
-    <section class="block">
-      <h2 class="block-title"><span class="idx">06</span> LADDER&nbsp;/&nbsp;SIP&nbsp;TRACE</h2>
+      <h2 class="block-title"><span class="idx">05</span> SIP&nbsp;TRACE</h2>
       <div class="panel control ladder-bar">
-        <label class="field grow">
-          <span>CALL&nbsp;/&nbsp;DIALOG</span>
-          <select id="trace-call"></select>
-        </label>
         <label class="field check">
           <span>OPTIONS</span>
           <input type="checkbox" id="trace-options" />
         </label>
         <button type="button" id="trace-clear" class="btn-mini danger">CLEAR TRACE</button>
       </div>
+
+      <table class="grid trace-grid">
+        <thead>
+          <tr>
+            <th>START</th><th>STATE</th><th>CALL-ID</th><th>REQUEST URI</th>
+            <th>FROM</th><th>TO</th><th>ORIG AGENT</th><th>DEST AGENT</th>
+            <th>LOCAL</th><th>REMOTE</th><th>DUR</th>
+          </tr>
+        </thead>
+        <tbody id="trace-table">
+          <tr class="empty"><td colspan="11">NO TRACE</td></tr>
+        </tbody>
+      </table>
+
       <div class="ladder">
         <div class="lad-lanes">
           <span class="lane" id="lane-left">—</span>
@@ -317,7 +282,7 @@
 
     <!-- Bloque: escenarios SIPp (Fase 2) — listar y lanzar los YAML de disco -->
     <section class="block">
-      <h2 class="block-title"><span class="idx">07</span> SCENARIOS</h2>
+      <h2 class="block-title"><span class="idx">06</span> SCENARIOS</h2>
       <form id="scenario-form" class="panel control">
         <label class="field">
           <span>FROM&nbsp;AGENT</span>
@@ -351,7 +316,7 @@
     </section>
     <!-- Bloque: pruebas de carga (Fase 3) -->
     <section class="block">
-      <h2 class="block-title"><span class="idx">08</span> LOAD&nbsp;TEST</h2>
+      <h2 class="block-title"><span class="idx">07</span> LOAD&nbsp;TEST</h2>
       <form id="load-form" class="panel control">
         <label class="field">
           <span>FROM&nbsp;AGENT</span>

@@ -14,8 +14,6 @@ const LABEL = {
 // Recordamos qué agente está elegido en PLACE CALL para no perderlo al refrescar.
 let selectedAgent = "default";   // agente que ORIGINA la llamada
 let selectedToAgent = "";        // agente DESTINO ("" = destino manual / externo)
-let selectedMsgAgent = "default"; // agente que ENVÍA el mensaje
-let selectedMsgToAgent = "";      // agente DESTINO del mensaje
 let selectedTrunkAgent = "default"; // agente que monitoriza el trunk a dar de alta
 let selectedScenarioAgent = "default"; // agente que EJECUTA el escenario
 let selectedScenarioFile = "";        // fichero de escenario elegido en el desplegable
@@ -113,41 +111,6 @@ async function agentAction(accion, id) {
   if (!res.ok) throw new Error(await res.text());
 }
 
-// ---- Mensajería SIP (MESSAGE) ----
-
-async function sendMessage(payload) {
-  const res = await fetch("/api/message", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
-
-function renderMessages(datos) {
-  const tbody = document.getElementById("messages");
-  if (!datos || datos.length === 0) {
-    tbody.innerHTML = '<tr class="empty"><td colspan="6">NO MESSAGES</td></tr>';
-    return;
-  }
-  // Las más recientes arriba.
-  tbody.innerHTML = datos.slice().reverse().map((m) => {
-    const dir = m.dir === "in" ? '<span class="badge s-up">IN</span>'
-                               : '<span class="badge s-dialing">OUT</span>';
-    let code = "—";
-    if (m.error) code = '<span class="s-failed">ERR</span>';
-    else if (m.code) code = esc(codeText(m.code, m.reason));
-    return "<tr>" +
-      "<td>" + dir + "</td>" +
-      "<td>" + esc(m.agent_id) + "</td>" +
-      "<td>" + esc(m.peer) + "</td>" +
-      "<td>" + esc(m.body) + "</td>" +
-      "<td>" + code + "</td>" +
-      "<td>" + hhmmss(m.timestamp) + "</td>" +
-      "</tr>";
-  }).join("");
-}
 
 // ---- Pintado de tablas ----
 
@@ -234,15 +197,6 @@ function renderAgentSelector(datos) {
 
   // --- Destino (TO AGENT): a qué agente se llama. Primera opción = manual/externo ---
   fillDestSelect("to-agent", selectedToAgent);
-
-  // --- Selectores equivalentes del panel de mensajes ---
-  const mo = document.getElementById("msg-agent");
-  if (mo) {
-    if (!ids.includes(selectedMsgAgent)) selectedMsgAgent = ids[0] || "default";
-    mo.innerHTML = sel.innerHTML; // mismas opciones que el origen de llamadas
-    mo.value = selectedMsgAgent;
-  }
-  fillDestSelect("msg-to-agent", selectedMsgToAgent);
 
   // Selector del alta de trunks (mismo origen de agentes).
   const tr = document.getElementById("tr-agent");
@@ -400,25 +354,70 @@ function renderTrunks(datos) {
 
 // ---- Traza SIP / diagrama de escalera ----
 
-// Rellena el selector de llamadas de la traza (filtra OPTIONS salvo que se marque).
+// Clase CSS de color para cada estado (mimetiza el visor de un SBC).
+function stateClass(state) {
+  if (!state) return "st-dim";
+  if (state.startsWith("ESTABLISHED")) return "st-estab";
+  if (state.startsWith("FAILED")) return "st-failed";
+  if (state.startsWith("TERMINATED")) return "st-term";
+  if (state === "RINGING" || state === "EARLY") return "st-early";
+  return "st-dim";
+}
+
+// Hora legible "2026-06-29 09:04:39.123" a partir del ISO con 'T'.
+function traceStart(t) {
+  return t ? t.replace("T", " ") : "—";
+}
+
+// Celda con texto recortado por CSS y el valor completo en el tooltip.
+function cell(val) {
+  const v = val || "—";
+  return '<td title="' + esc(v) + '">' + esc(v) + "</td>";
+}
+
+// Pinta la tabla de diálogos tipo SBC (filtra OPTIONS salvo que se marque).
 function renderTraceCalls(calls) {
-  const sel = document.getElementById("trace-call");
+  const tbody = document.getElementById("trace-table");
   let lista = calls || [];
   if (!showOptions) {
-    lista = lista.filter((c) => !c.first_line.startsWith("OPTIONS"));
+    lista = lista.filter((c) => c.method !== "OPTIONS");
   }
-  const ids = lista.map((c) => c.call_id);
-  if (selectedCall && !ids.includes(selectedCall)) selectedCall = "";
-  if (!selectedCall && ids.length) selectedCall = ids[0];
+  // Si la llamada seleccionada ya no está, soltamos la selección.
+  if (selectedCall && !lista.some((c) => c.call_id === selectedCall)) {
+    selectedCall = "";
+  }
+  if (lista.length === 0) {
+    tbody.innerHTML = '<tr class="empty"><td colspan="11">NO TRACE</td></tr>';
+    return;
+  }
 
-  sel.innerHTML = lista.map((c) => {
-    // Etiqueta legible: primer método + nº de mensajes.
-    const metodo = c.first_line.split(" ")[0];
-    return '<option value="' + esc(c.call_id) + '">' +
-      esc(metodo) + " · " + c.count + " msg · " + esc(c.call_id.slice(0, 8)) +
-      "</option>";
-  }).join("") || '<option value="">— sin llamadas —</option>';
-  sel.value = selectedCall;
+  tbody.innerHTML = lista.map((c) => {
+    const sel = c.call_id === selectedCall ? " sel" : "";
+    const dur = c.duration_sec ? c.duration_sec : 0;
+    return '<tr class="trace-row' + sel + '" data-call-id="' + esc(c.call_id) + '">' +
+      cell(traceStart(c.start_time)) +
+      '<td class="' + stateClass(c.state) + '">' + esc(c.state || "—") + "</td>" +
+      cell(c.call_id) +
+      cell(c.req_uri) +
+      cell(c.from_uri) +
+      cell(c.to_uri) +
+      cell(c.orig_agent) +
+      cell(c.dest_agent) +
+      cell(c.laddr) +
+      cell(c.raddr) +
+      '<td class="right">' + dur + "</td>" +
+      "</tr>";
+  }).join("");
+
+  // Clic en una fila: seleccionar esa llamada y mostrar su ladder.
+  tbody.querySelectorAll(".trace-row").forEach((row) => {
+    row.addEventListener("click", () => {
+      selectedCall = row.dataset.callId;
+      tbody.querySelectorAll(".trace-row.sel").forEach((r) => r.classList.remove("sel"));
+      row.classList.add("sel");
+      refreshTrace();
+    });
+  });
 }
 
 // Construye las flechas del ladder a partir de los eventos, deduplicando el mismo
@@ -574,11 +573,10 @@ function renderScenarioRuns(datos) {
 async function refresh() {
   const conn = document.getElementById("conn");
   try {
-    const [agents, calls, trunks, messages, scenarioRuns, audio, loadStats] = await Promise.all([
+    const [agents, calls, trunks, scenarioRuns, audio, loadStats] = await Promise.all([
       fetch("/api/agents").then((r) => r.json()),
       fetch("/api/calls").then((r) => r.json()),
       fetch("/api/trunks").then((r) => r.json()),
-      fetch("/api/messages").then((r) => r.json()),
       fetch("/api/scenarios/runs").then((r) => r.json()),
       fetch("/api/media").then((r) => r.json()),
       fetch("/api/load").then((r) => r.json()),
@@ -587,7 +585,6 @@ async function refresh() {
     renderAgentSelector(agents);
     renderCalls(calls);
     renderTrunks(trunks);
-    renderMessages(messages);
     renderScenarioRuns(scenarioRuns);
     renderAudioStatus(audio);
     renderLoad(loadStats);
@@ -619,64 +616,6 @@ document.getElementById("to-agent").addEventListener("change", (ev) => {
   selectedToAgent = ev.target.value;
   const a = agentsCache.find((x) => x.id === selectedToAgent);
   if (a) document.getElementById("to").value = "sip:" + a.bind_ip + ":" + a.sip_port;
-});
-
-// Selectores del panel de mensajes.
-document.getElementById("msg-agent").addEventListener("change", (ev) => {
-  selectedMsgAgent = ev.target.value;
-});
-document.getElementById("msg-to-agent").addEventListener("change", (ev) => {
-  selectedMsgToAgent = ev.target.value;
-});
-
-// Envío de un MESSAGE.
-document.getElementById("msg-form").addEventListener("submit", async (ev) => {
-  ev.preventDefault();
-  const hint = document.getElementById("msg-hint");
-  const agentId = document.getElementById("msg-agent").value || "default";
-  const toAgentId = document.getElementById("msg-to-agent").value;
-  const body = val("msg-body");
-  const to = val("msg-to");
-
-  if (!body) {
-    hint.textContent = "Escribe el texto del mensaje.";
-    hint.className = "hint error";
-    return;
-  }
-
-  let destHost = "";
-  let destPort = 0;
-  const toAgent = agentsCache.find((a) => a.id === toAgentId);
-  if (toAgent) {
-    destHost = toAgent.bind_ip;
-    destPort = toAgent.sip_port;
-  }
-  if (!toAgent && !to) {
-    hint.textContent = "Elige un TO AGENT o indica una TO URI.";
-    hint.className = "hint error";
-    return;
-  }
-
-  const payload = {
-    agent_id: agentId,
-    to: toAgent ? "" : to,
-    dest_host: destHost,
-    dest_port: destPort,
-    from_user: val("msg-from-user"),
-    to_user: val("msg-to-user"),
-    body,
-  };
-
-  try {
-    await sendMessage(payload);
-    hint.textContent = "Mensaje enviado.";
-    hint.className = "hint";
-    document.getElementById("msg-body").value = "";
-    refresh();
-  } catch (e) {
-    hint.textContent = "Error: " + e.message;
-    hint.className = "hint error";
-  }
 });
 
 // Mostrar/ocultar el bloque de valores SIP avanzados.
@@ -851,11 +790,7 @@ document.getElementById("btn-xfer").addEventListener("click", async () => {
   refresh();
 });
 
-// ---- Controles del ladder ----
-document.getElementById("trace-call").addEventListener("change", (ev) => {
-  selectedCall = ev.target.value;
-  refreshTrace();
-});
+// ---- Controles del visor de trazas ----
 document.getElementById("trace-options").addEventListener("change", (ev) => {
   showOptions = ev.target.checked;
   selectedCall = ""; // recalcula la selección con el nuevo filtro

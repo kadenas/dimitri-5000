@@ -1,7 +1,53 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-06-28 (sesión 13: Fase 5.4 — HOLD/RESUME real con re-INVITE)
+Fecha: 2026-06-29 (sesión 14: UI — eliminar MESSAGES, visor de trazas tipo SBC)
+
+## Sesión 14 — UI: fuera MESSAGES (panel 05) + visor de trazas tipo SBC
+- DECISIÓN del usuario: el panel MESSAGES (SIP MESSAGE/RFC 3428) no aporta; se RETIRA
+  de la web. Alcance acordado: quitar SOLO la UI (panel + JS + endpoints HTTP); el
+  backend (`sipcore/message.go`, `control.SendMessage/RecordIncomingMessage/...`) se
+  CONSERVA, así un MESSAGE entrante sigue contestándose con 200 OK.
+- DECISIÓN del usuario: el viejo panel "06 LADDER/SIP TRACE" (elegías UNA llamada en un
+  desplegable) era incómodo. Se rediseña como VISOR TIPO SBC: una TABLA con todas las
+  llamadas/diálogos y, al pulsar una fila, el diagrama de escalera de esa llamada debajo
+  (se reaprovecha el ladder existente como vista de detalle; clic en mensaje => raw).
+  Columnas origen/destino: AMBAS (agente origen/destino + IP:puerto local/remoto).
+- CAMBIOS (respeta capas; `trace` no conoce agentes, el mapeo a agentes lo hace webui):
+  - trace/trace.go: Event gana ReqURI/FromURI/ToURI (parseados en parse(): Request-URI =
+    2º token de la 1ª línea; From/To desde cabeceras, admite formas cortas f/t).
+    CallSummary gana StartTime/State/Method/ReqURI/FromURI/ToURI/Laddr/Raddr/DurationSec
+    y OrigAgent/DestAgent (estos los rellena webui). Calls() deriva por diálogo:
+    State = TERMINATED-200 si hubo BYE; ESTABLISHED si final 2xx a INVITE; FAILED-<code>
+    si final >=300; RINGING (180) / EARLY (100/183); DurationSec = (BYE - 200) en segundos
+    (layout "2006-01-02T15:04:05.000"). Mantiene CallID/Count/FirstLine/LastTime (compat).
+  - webui/server.go: ELIMINADOS endpoints /api/message y /api/messages (+ handlers,
+    messageView, sendMessageReq). handleTraceCalls ahora construye mapa "ip:puerto"->nombre
+    de agente (manager.Snapshot + BindIP/SIPPort) y rellena OrigAgent (match Laddr) /
+    DestAgent (match Raddr). Añadidos imports net, strconv.
+  - webui/static/index.html: BORRADA la <section> 05 MESSAGES. El antiguo bloque 06 pasa a
+    ser "05 SIP TRACE": barra (toggle OPTIONS + CLEAR TRACE) + tabla #trace-table (START,
+    STATE, CALL-ID, REQUEST URI, FROM, TO, ORIG AGENT, DEST AGENT, LOCAL, REMOTE, DUR) +
+    el ladder (#ladder-rows, lanes) y #lad-detail como detalle. Renumerados: SCENARIOS=06,
+    LOAD TEST=07 (ahora hay 7 paneles, secuenciales).
+  - webui/static/js/app.js: quitado renderMessages, helper sendMessage, los selectores
+    msg-agent/msg-to-agent, el submit de #msg-form y el listener de #trace-call; quitado el
+    fetch /api/messages del loop refresh(). renderTraceCalls() ahora pinta #trace-table:
+    cada fila clicable (data-call-id) fija selectedCall, resalta la fila (.sel) y refresca
+    el ladder; stateClass() colorea el estado; filtro OPTIONS por c.method.
+  - webui/static/css/style.css: estilos .trace-grid (table-layout fixed, celdas con
+    ellipsis), fila .sel y colores de estado (st-estab/st-failed/st-term/st-early/st-dim).
+- TESTS: trace/trace_test.go añade TestParseIdentidades (ReqURI/From/To) y TestEstadoDerivado
+  (INVITE->200->BYE => TERMINATED-200 con DurationSec>=0; INVITE->486 => FAILED-486).
+  go build/vet/test ./... en verde.
+- VERIFICADO e2e (binario, loopback, web :8091): default :5081 -> uas-2 :5082 con hold=2s:
+  /api/trace/calls devuelve state=TERMINATED-200, duration_sec=2, from/to/req_uri OK,
+  orig_agent="Agente principal", dest_agent="UAS Dos". Llamada a agente que da 486 =>
+  FAILED-486. /api/message y /api/messages => 404. El índice ya no muestra MESSAGES y
+  el panel 05 es SIP TRACE.
+- PRÓXIMO posible: ordenar/filtrar la tabla de trazas (por estado, por agente), paginar o
+  exportar; mostrar más cabeceras útiles (PAI, Diversion); o seguir con lo que quedaba
+  pendiente de Fase 5.4 (HOLD desde el lado UAS) y runner (reason/save/match/CSV).
 
 ## Sesión 13 — Fase 5.4: HOLD/RESUME real (re-INVITE)
 - DECISIÓN: Fase 5.3 (grabar RTP a WAV / oír en el navegador) DESCARTADA por el

@@ -28,15 +28,34 @@ type Event struct {
 	Code      int    `json:"code"`       // código (solo response)
 	CallID    string `json:"call_id"`    // Call-ID (agrupa el diálogo)
 	CSeq      string `json:"cseq"`       // valor de la cabecera CSeq
+	ReqURI    string `json:"req_uri"`    // Request-URI (solo request)
+	FromURI   string `json:"from_uri"`   // cabecera From (tal cual)
+	ToURI     string `json:"to_uri"`     // cabecera To (tal cual)
 	Raw       string `json:"raw"`        // mensaje completo
 }
 
-// CallSummary resume una llamada/diálogo presente en la traza (para elegirla).
+// CallSummary resume una llamada/diálogo presente en la traza, con los campos
+// derivados que necesita el visor tipo SBC del panel 06. Conserva los campos
+// originales (CallID/Count/FirstLine/LastTime) por compatibilidad.
 type CallSummary struct {
 	CallID    string `json:"call_id"`
 	Count     int    `json:"count"`      // nº de mensajes
 	FirstLine string `json:"first_line"` // primera línea del primer mensaje
 	LastTime  string `json:"last_time"`  // hora del último mensaje
+
+	// Derivados para la tabla de diálogos.
+	StartTime   string `json:"start_time"`   // hora del primer mensaje
+	State       string `json:"state"`        // ESTABLISHED / FAILED-xxx / TERMINATED-200 / RINGING / EARLY
+	Method      string `json:"method"`       // método del primer request (INVITE, OPTIONS, MESSAGE...)
+	ReqURI      string `json:"req_uri"`      // Request-URI del primer request
+	FromURI     string `json:"from_uri"`     // From del diálogo
+	ToURI       string `json:"to_uri"`       // To del diálogo
+	Laddr       string `json:"laddr"`        // IP:puerto local (nuestro extremo)
+	Raddr       string `json:"raddr"`        // IP:puerto remoto
+	DurationSec int    `json:"duration_sec"` // segundos entre 200 (INVITE) y BYE
+	// Rellenados por la capa web (trace no conoce agentes).
+	OrigAgent string `json:"orig_agent"` // agente que maneja el extremo local
+	DestAgent string `json:"dest_agent"` // agente/destino del extremo remoto
 }
 
 // Store guarda los últimos eventos en un buffer acotado, seguro entre goroutines.
@@ -103,27 +122,113 @@ func (s *Store) ByCallID(id string) []Event {
 	return out
 }
 
-// Calls resume las llamadas presentes, de la más reciente a la más antigua.
+// timeLayout es el formato con el que se guarda Event.Time (para calcular duraciones).
+const timeLayout = "2006-01-02T15:04:05.000"
+
+// Calls resume las llamadas presentes, de la más reciente a la más antigua, con
+// los campos derivados (estado, duración, identidades) que pinta el visor SBC.
 func (s *Store) Calls() []CallSummary {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Mapa id -> resumen, preservando el orden de primera aparición.
 	idx := make(map[string]int)
 	out := make([]CallSummary, 0, 8)
+	// Estado intermedio por diálogo para derivar State/DurationSec al final.
+	type acc struct {
+		sawBye     bool
+		finalCode  int    // mayor código final (>=200) visto a un INVITE
+		prov       int    // mejor provisional (180/183/100) visto a un INVITE
+		answerTime string // hora del 200 a INVITE
+		byeTime    string // hora del BYE
+	}
+	accs := make([]acc, 0, 8)
+
 	for _, e := range s.events {
 		if e.CallID == "" {
 			continue
 		}
-		if i, ok := idx[e.CallID]; ok {
-			out[i].Count++
-			out[i].LastTime = e.Time
-		} else {
-			idx[e.CallID] = len(out)
+		i, ok := idx[e.CallID]
+		if !ok {
+			i = len(out)
+			idx[e.CallID] = i
 			out = append(out, CallSummary{
-				CallID: e.CallID, Count: 1, FirstLine: e.FirstLine, LastTime: e.Time,
+				CallID: e.CallID, FirstLine: e.FirstLine,
+				StartTime: e.Time, Method: e.Method,
+				ReqURI: e.ReqURI, FromURI: e.FromURI, ToURI: e.ToURI,
+				Laddr: e.Laddr, Raddr: e.Raddr,
 			})
+			accs = append(accs, acc{})
+		}
+		out[i].Count++
+		out[i].LastTime = e.Time
+		a := &accs[i]
+
+		// Completar identidades con el primer request que las traiga (el INVITE
+		// inicial suele ir antes que las respuestas).
+		if e.Kind == "request" {
+			if out[i].ReqURI == "" {
+				out[i].ReqURI = e.ReqURI
+			}
+			if out[i].Method == "" {
+				out[i].Method = e.Method
+			}
+		}
+		if out[i].FromURI == "" {
+			out[i].FromURI = e.FromURI
+		}
+		if out[i].ToURI == "" {
+			out[i].ToURI = e.ToURI
+		}
+
+		switch {
+		case e.Kind == "request" && e.Method == "BYE":
+			a.sawBye = true
+			if a.byeTime == "" {
+				a.byeTime = e.Time
+			}
+		case e.Kind == "response" && e.Method == "INVITE":
+			switch {
+			case e.Code >= 200:
+				if e.Code > a.finalCode {
+					a.finalCode = e.Code
+				}
+				if e.Code/100 == 2 && a.answerTime == "" {
+					a.answerTime = e.Time
+				}
+			case e.Code >= 100:
+				if e.Code > a.prov {
+					a.prov = e.Code
+				}
+			}
 		}
 	}
+
+	// Derivar State y DurationSec por diálogo.
+	for i := range out {
+		a := accs[i]
+		switch {
+		case a.sawBye:
+			out[i].State = "TERMINATED-200"
+		case a.finalCode >= 300:
+			out[i].State = "FAILED-" + strconv.Itoa(a.finalCode)
+		case a.finalCode/100 == 2:
+			out[i].State = "ESTABLISHED"
+		case a.prov == 180:
+			out[i].State = "RINGING"
+		case a.prov >= 100:
+			out[i].State = "EARLY"
+		}
+		if a.answerTime != "" && a.byeTime != "" {
+			t1, e1 := time.Parse(timeLayout, a.answerTime)
+			t2, e2 := time.Parse(timeLayout, a.byeTime)
+			if e1 == nil && e2 == nil {
+				if d := int(t2.Sub(t1).Seconds()); d >= 0 {
+					out[i].DurationSec = d
+				}
+			}
+		}
+	}
+
 	// Invertimos para mostrar las más recientes primero.
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]
@@ -161,10 +266,14 @@ func parse(msg string) Event {
 			ev.Code, _ = strconv.Atoi(partes[1])
 		}
 	} else {
-		// Petición: "INVITE sip:... SIP/2.0"
+		// Petición: "INVITE sip:2000@host SIP/2.0" -> método y Request-URI.
 		ev.Kind = "request"
-		if sp := strings.IndexByte(ev.FirstLine, ' '); sp > 0 {
-			ev.Method = ev.FirstLine[:sp]
+		campos := strings.Fields(ev.FirstLine)
+		if len(campos) >= 1 {
+			ev.Method = campos[0]
+		}
+		if len(campos) >= 2 {
+			ev.ReqURI = campos[1]
 		}
 	}
 
@@ -187,6 +296,14 @@ func parse(msg string) Event {
 				if len(campos) == 2 {
 					ev.Method = campos[1]
 				}
+			}
+		case "from", "f":
+			if ev.FromURI == "" {
+				ev.FromURI = strings.TrimSpace(val)
+			}
+		case "to", "t":
+			if ev.ToURI == "" {
+				ev.ToURI = strings.TrimSpace(val)
 			}
 		}
 	}
