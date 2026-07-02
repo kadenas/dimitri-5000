@@ -1,7 +1,37 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-06-29 (sesión 14: UI — eliminar MESSAGES, visor de trazas tipo SBC)
+Fecha: 2026-07-02 (sesión 15: README reescrito para usuarios ajenos al proyecto)
+
+## Sesión 15 — README: actualización y reescritura "humana"
+- PROBLEMA: el README decía "v0: el motor de llamadas (INVITE) está en desarrollo",
+  desactualizado desde la Fase 1. Vendía el proyecto muy por debajo de lo que es.
+- OBJETIVO acordado: actualizarlo Y hacerlo más humano, de modo que alguien ajeno
+  al proyecto pueda arrancarlo y usarlo sin leer el resto de la documentación.
+- CAMBIOS (solo README.md; ningún cambio de código):
+  - Apertura honesta: qué hace hoy (llamadas, RTP, hold, escenarios, carga, trazas)
+    y el porqué frente a SIPp (YAML vs XML, web vs ncurses).
+  - Sección "¿Qué puedes hacer con ella?" verificada contra el código: RichInvite/PAI,
+    G.711 + WAV propio, HOLD/RESUME/REFER, escenarios UAC/UAS, carga con escenario
+    por llamada, monitor OPTIONS, visor de trazas, multi-agente. Menciona los 7
+    paneles de la web.
+  - Arranque rápido con ./run-web.sh / .\run-web.ps1 y un primer experimento guiado
+    en loopback (crear 2º agente, llamar entre los dos, mirar la traza) que no
+    requiere ningún equipo SIP externo.
+  - Tabla de los 5 modos (web/uac/uas/scenario/monitor) con ejemplos, sacados de
+    los flags reales de main.go.
+  - Ejemplo YAML: el flujo real de examples/scenarios/uac-basico.yaml, validado
+    contra SCENARIO_FORMAT.md.
+  - Compilación de binario en 3 líneas, delegando en DESPLIEGUE.md.
+- PRECISIÓN verificada: se evitó afirmar que la config de agentes/trunks del modo
+  web "se guarda sola" — agent.Manager NO persiste a disco (la persistencia del
+  Store es del modo monitor). El README dice "estado en memoria".
+- Además: run-web.sh pasa a ejecutable (chmod +x), coherente con su cabecera de uso.
+- PENDIENTE (sin cambios desde la sesión 14): ordenar/filtrar/exportar la tabla de
+  trazas; más cabeceras (PAI, Diversion); HOLD desde el lado UAS; runner
+  (reason/save/match/CSV inject). Posible mejora futura detectada en la revisión:
+  webui/server.go ronda las 1060 líneas (candidato a partir por dominios) y
+  control/webui no tienen tests (un httptest de hold/resume daría mucho por poco).
 
 ## Sesión 14 — UI: fuera MESSAGES (panel 05) + visor de trazas tipo SBC
 - DECISIÓN del usuario: el panel MESSAGES (SIP MESSAGE/RFC 3428) no aporta; se RETIRA
