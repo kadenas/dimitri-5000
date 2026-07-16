@@ -78,9 +78,88 @@ func TestCargaSostieneYDetiene(t *testing.T) {
 	if !waitFor(3*time.Second, func() bool { return !gen.Snapshot().Running }) {
 		t.Fatalf("la carga no drenó tras STOP; stats=%+v", gen.Snapshot())
 	}
-	if got := gen.Snapshot().Active; got != 0 {
-		t.Fatalf("tras STOP Active=%d, esperado 0", got)
+
+	// La foto FINAL se conserva tras el STOP (no se pierde al drenar).
+	fin := gen.Snapshot()
+	if fin.Active != 0 {
+		t.Fatalf("tras STOP Active=%d, esperado 0", fin.Active)
 	}
+	if fin.Launched < target || fin.Established < target {
+		t.Fatalf("la foto final perdió contadores: %+v", fin)
+	}
+	if fin.FinishedAt == "" || fin.StartedAt == "" {
+		t.Fatalf("la foto final debe llevar StartedAt y FinishedAt: %+v", fin)
+	}
+	if fin.Stopping {
+		t.Fatalf("la foto final no debe quedar en Stopping: %+v", fin)
+	}
+}
+
+// TestCargaMaxCallsAutofin verifica que, con un tope MaxCalls y un UAS que cuelga
+// él mismo, la prueba TERMINA SOLA (sin STOP): exactamente MaxCalls lanzadas (el
+// contador vive en el loop, sin carrera que sobrepase el tope), todas terminadas,
+// y la foto final disponible en Snapshot.
+func TestCargaMaxCallsAutofin(t *testing.T) {
+	const (
+		ip       = "127.0.0.1"
+		uasPort  = 35086
+		uacPort  = 35087
+		maxCalls = 3
+	)
+
+	uas, err := sipcore.New(ip, uasPort, "uas", "", nil)
+	if err != nil {
+		t.Fatalf("creando UAS: %v", err)
+	}
+	defer uas.Close()
+	// El UAS cuelga cada llamada a los 150 ms: así hay reposición y final natural.
+	uas.SetUASPolicy(sipcore.UASPolicy{RingDelay: 10 * time.Millisecond, AnswerCode: 200, HoldTime: 150 * time.Millisecond})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = uas.Serve(ctx, "udp", ip+":"+strconv.Itoa(uasPort)) }()
+
+	uac, err := sipcore.New(ip, uacPort, "uac", "", nil)
+	if err != nil {
+		t.Fatalf("creando UAC: %v", err)
+	}
+	defer uac.Close()
+	go func() { _ = uac.Serve(ctx, "udp", ip+":"+strconv.Itoa(uacPort)) }()
+	time.Sleep(200 * time.Millisecond)
+
+	gen := New(uac, nil)
+	spec := Spec{
+		Invite:     sipcore.RichInvite{DestHost: ip, DestPort: uasPort},
+		Concurrent: 2,
+		CPS:        50,
+		MaxCalls:   maxCalls,
+		WithMedia:  false,
+	}
+	if err := gen.Start(ctx, spec); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Sin llamar a Stop: debe acabar sola cuando el UAS cuelgue la última.
+	if !waitFor(5*time.Second, func() bool { return !gen.Snapshot().Running }) {
+		t.Fatalf("la carga no autofinalizó con MaxCalls; stats=%+v", gen.Snapshot())
+	}
+
+	fin := gen.Snapshot()
+	if fin.Launched != maxCalls {
+		t.Fatalf("Launched=%d, esperado exactamente %d (tope respetado)", fin.Launched, maxCalls)
+	}
+	if fin.Ended != maxCalls || fin.Active != 0 || fin.Pending != 0 {
+		t.Fatalf("foto final incoherente: %+v", fin)
+	}
+	if fin.FinishedAt == "" {
+		t.Fatalf("la foto final debe llevar FinishedAt: %+v", fin)
+	}
+
+	// El hueco queda libre: se puede arrancar otra prueba inmediatamente.
+	if err := gen.Start(ctx, spec); err != nil {
+		t.Fatalf("Start tras autofin: %v", err)
+	}
+	gen.Stop()
 }
 
 // TestCargaConEscenario verifica que el motor de carga puede establecer cada

@@ -931,24 +931,37 @@ async function loadNetInfo() {
 // Última foto de stats de carga por agente (para repintar al cambiar de agente).
 let loadCache = [];
 
-// Pinta las métricas agregadas de la carga del agente seleccionado.
+// Pinta las métricas agregadas de la carga del agente seleccionado. Sin prueba en
+// curso, el backend conserva la foto FINAL de la última (finished_at relleno): se
+// muestra como FINISHED para que el operador no pierda los resultados.
 function renderLoad(datos) {
   loadCache = datos || [];
   const el = document.getElementById("load-stats");
   if (!el) return;
   const s = loadCache.find((x) => x.agent_id === selectedLoadAgent);
-  if (!s || !s.running) {
+  if (!s || (!s.running && !s.finished_at)) {
     el.innerHTML = '<span class="load-idle">IDLE — sin prueba de carga en curso</span>';
     return;
   }
-  const state = s.stopping
-    ? '<span class="badge s-failed">STOPPING</span>'
-    : '<span class="badge s-up">RUNNING</span>';
+  let state;
+  if (!s.running) {
+    state = '<span class="badge s-ended">FINISHED</span>';
+  } else if (s.stopping) {
+    state = '<span class="badge s-failed">STOPPING</span>';
+  } else {
+    state = '<span class="badge s-up">RUNNING</span>';
+  }
   const chip = (label, value, cls) =>
     '<div class="load-chip' + (cls ? " " + cls : "") + '"><span class="lc-l">' +
     label + '</span><span class="lc-v">' + value + "</span></div>";
 
+  // Duración total de la prueba terminada (foto final).
+  const dur = !s.running && s.started_at && s.finished_at
+    ? Math.max(0, Math.round((new Date(s.finished_at) - new Date(s.started_at)) / 1000)) + "s"
+    : "";
+
   let html = '<div class="load-row">' + state +
+    (dur ? chip("DURATION", dur) : "") +
     (s.scenario ? chip("SCENARIO", esc(s.scenario)) : "") +
     chip("TARGET", s.target) +
     chip("ACTIVE", s.active, s.active >= s.target ? "ok" : "") +

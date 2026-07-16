@@ -1,7 +1,37 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-07-16 (sesión 16: números A/B fijos en el panel de carga)
+Fecha: 2026-07-16 (sesión 17: carga — foto final tras STOP, autofin con MaxCalls y RTP acumulado)
+
+## Sesión 17 — Carga: foto final, autofin con MaxCalls y métricas RTP que no se pierden
+- OBJETIVO: primera mejora del plan de la sesión 16 (puntos 1 y 2, que van juntos:
+  sin acumular el RTP de las sesiones cerradas, la foto final saldría a cero).
+- CAMBIOS (internal/load/load.go + webui/static/js/app.js):
+  - Foto final: al terminar una ejecución (drenaje del STOP o autofin), retire()
+    guarda Generator.last con todos los contadores, Running=false, Stopping=false
+    y el campo NUEVO Stats.FinishedAt ("finished_at"). Snapshot() la devuelve
+    hasta la siguiente carga (antes devolvía Stats{} vacío: se perdía todo).
+  - Autofin: con MaxCalls>0 alcanzado y active+pending==0, launchLoop se retira
+    solo (finish() en otra goroutine porque espera al propio loop vía wg). El
+    hueco queda libre: se puede arrancar otra prueba sin STOP.
+  - BUG RTP arreglado: al cerrar cada media.Session el worker vuelca sus métricas
+    a acumuladores atómicos del run (addSessionMetrics, DESPUÉS de Close para no
+    perder paquetes); run.stats() = acumulado + sesiones vivas. Antes Snapshot
+    solo sumaba r.sessions y los contadores BAJABAN al colgar.
+  - CARRERA arreglada: launched/pending se cuentan ahora en launchLoop ANTES de
+    arrancar el worker (antes dentro del worker: con cps alta varios ticks se
+    colaban y se sobrepasaba MaxCalls; además el autofin habría visto 0 falsos).
+  - Web: renderLoad pinta la foto final con badge FINISHED (clase s-ended) y chip
+    DURATION (finished_at - started_at); IDLE solo si no hay foto que enseñar.
+- VERIFICADO: test nuevo TestCargaMaxCallsAutofin (Launched == MaxCalls exacto,
+  autofin sin STOP, re-arranque inmediato); TestCargaSostieneYDetiene ampliado
+  (foto final con contadores, FinishedAt, sin Stopping). go test -race y suite
+  completa en verde. E2E con la app real: en vivo tx_packets=2402; tras STOP la
+  foto final persiste con tx_packets=2408 y finished_at (antes: todo a cero).
+- PRÓXIMO (del plan de la sesión 16): 3) desglose de Failed por causa (código
+  SIP/timeout/transporte) + PDD (INVITE->200) min/avg/max; 4) duración de llamada
+  opcional en la Spec (churn); 5) menores (ticker ~1000 cps máx y pierde ticks;
+  el STOP cuenta como Failed las llamadas en vuelo canceladas).
 
 ## Sesión 16 — Carga: números A y B fijos desde el panel
 - OBJETIVO del usuario: poder fijar número A (llamante) y número B (llamado) en el

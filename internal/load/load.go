@@ -66,6 +66,7 @@ type Stats struct {
 	RxBytes     uint64  `json:"rx_bytes"`
 	Lost        int64   `json:"lost"` // pérdida RTP agregada
 	StartedAt   string  `json:"started_at,omitempty"`
+	FinishedAt  string  `json:"finished_at,omitempty"` // cuándo terminó (solo en la foto final)
 }
 
 // run es el estado de UNA ejecución de carga. Cada Start crea uno nuevo; así un
@@ -88,6 +89,72 @@ type run struct {
 	sessMu   sync.Mutex
 	sessions map[uint64]*media.Session // activas con media, para agregar métricas
 	nextID   atomic.Uint64
+
+	// Acumulados RTP de las sesiones YA cerradas. Sin esto, la foto perdería el
+	// tráfico de cada llamada al colgarla (los contadores "bajarían" durante la
+	// prueba y la foto final saldría a cero).
+	txPackets atomic.Uint64
+	rxPackets atomic.Uint64
+	txBytes   atomic.Uint64
+	rxBytes   atomic.Uint64
+	lost      atomic.Int64
+}
+
+// addSessionMetrics vuelca a los acumulados las métricas de una sesión que se
+// cierra. Llamar DESPUÉS de Close(): los contadores ya no crecen y no se pierde
+// ningún paquete entre la lectura y el cierre.
+func (r *run) addSessionMetrics(s *media.Session) {
+	m := s.Metrics()
+	r.txPackets.Add(m.TxPackets)
+	r.rxPackets.Add(m.RxPackets)
+	r.txBytes.Add(m.TxBytes)
+	r.rxBytes.Add(m.RxBytes)
+	r.lost.Add(m.Lost)
+}
+
+// stats construye la foto agregada de esta ejecución: contadores de llamadas y
+// RTP (acumulado de las cerradas + lo que llevan las vivas).
+func (r *run) stats() Stats {
+	tx, rx := r.txPackets.Load(), r.rxPackets.Load()
+	txB, rxB := r.txBytes.Load(), r.rxBytes.Load()
+	lost := r.lost.Load()
+	r.sessMu.Lock()
+	for _, s := range r.sessions {
+		m := s.Metrics()
+		tx += m.TxPackets
+		rx += m.RxPackets
+		txB += m.TxBytes
+		rxB += m.RxBytes
+		lost += m.Lost
+	}
+	r.sessMu.Unlock()
+
+	scName := ""
+	if r.spec.Scenario != nil {
+		scName = r.spec.Scenario.Name
+	}
+
+	return Stats{
+		Running:     true,
+		Stopping:    r.stopping.Load(),
+		Target:      r.spec.Concurrent,
+		CPS:         r.spec.CPS,
+		MaxCalls:    r.spec.MaxCalls,
+		WithMedia:   r.spec.WithMedia,
+		Scenario:    scName,
+		Launched:    r.launched.Load(),
+		Active:      r.active.Load(),
+		Pending:     r.pending.Load(),
+		Established: r.established.Load(),
+		Failed:      r.failed.Load(),
+		Ended:       r.ended.Load(),
+		TxPackets:   tx,
+		RxPackets:   rx,
+		TxBytes:     txB,
+		RxBytes:     rxB,
+		Lost:        lost,
+		StartedAt:   r.startedAt.Format(time.RFC3339),
+	}
 }
 
 // Generator lanza y sostiene la carga sobre el Core de un agente. Una sola
@@ -96,8 +163,9 @@ type Generator struct {
 	core *sipcore.Core
 	log  *slog.Logger
 
-	mu  sync.Mutex
-	cur *run // nil si no hay carga activa ni drenando
+	mu   sync.Mutex
+	cur  *run   // nil si no hay carga activa ni drenando
+	last *Stats // foto FINAL de la última ejecución terminada (nil si nunca hubo)
 }
 
 // New crea el generador ligado al Core indicado (el de un agente).
@@ -160,13 +228,34 @@ func (g *Generator) Stop() {
 	}
 	go func() {
 		r.wg.Wait() // espera a que salgan todos los BYE y se cierre la media
-		g.mu.Lock()
-		if g.cur == r {
-			g.cur = nil
-		}
-		g.mu.Unlock()
+		g.retire(r)
 		g.log.Info("carga detenida (todas las llamadas colgadas)")
 	}()
+}
+
+// finish termina una ejecución que acabó POR SÍ SOLA (MaxCalls alcanzado y ya sin
+// llamadas vivas): espera al resto de goroutines y la retira dejando la foto final.
+func (g *Generator) finish(r *run) {
+	r.cancel() // libera el contexto (los workers ya terminaron)
+	r.wg.Wait()
+	g.retire(r)
+	g.log.Info("carga completada (tope de llamadas alcanzado)")
+}
+
+// retire captura la foto FINAL de la ejecución (visible en Snapshot hasta la
+// siguiente carga) y libera el hueco para poder arrancar otra. Pueden llamarla
+// el drenaje del STOP y el autofin de MaxCalls: solo la primera tiene efecto.
+func (g *Generator) retire(r *run) {
+	st := r.stats()
+	st.Running = false
+	st.Stopping = false
+	st.FinishedAt = time.Now().Format(time.RFC3339)
+	g.mu.Lock()
+	if g.cur == r {
+		g.last = &st
+		g.cur = nil
+	}
+	g.mu.Unlock()
 }
 
 // Running indica si hay una prueba en curso (incluida la fase de drenaje del STOP).
@@ -176,54 +265,20 @@ func (g *Generator) Running() bool {
 	return g.cur != nil
 }
 
-// Snapshot devuelve la foto agregada actual (Running=false si no hay carga).
+// Snapshot devuelve la foto agregada actual. Sin carga en curso, devuelve la foto
+// FINAL de la última ejecución (Running=false, FinishedAt relleno): así el operador
+// no pierde los resultados justo cuando la prueba termina.
 func (g *Generator) Snapshot() Stats {
 	g.mu.Lock()
-	r := g.cur
+	r, last := g.cur, g.last
 	g.mu.Unlock()
 	if r == nil {
+		if last != nil {
+			return *last
+		}
 		return Stats{Running: false}
 	}
-
-	var tx, rx, txB, rxB uint64
-	var lost int64
-	r.sessMu.Lock()
-	for _, s := range r.sessions {
-		m := s.Metrics()
-		tx += m.TxPackets
-		rx += m.RxPackets
-		txB += m.TxBytes
-		rxB += m.RxBytes
-		lost += m.Lost
-	}
-	r.sessMu.Unlock()
-
-	scName := ""
-	if r.spec.Scenario != nil {
-		scName = r.spec.Scenario.Name
-	}
-
-	return Stats{
-		Running:     true,
-		Stopping:    r.stopping.Load(),
-		Target:      r.spec.Concurrent,
-		CPS:         r.spec.CPS,
-		MaxCalls:    r.spec.MaxCalls,
-		WithMedia:   r.spec.WithMedia,
-		Scenario:    scName,
-		Launched:    r.launched.Load(),
-		Active:      r.active.Load(),
-		Pending:     r.pending.Load(),
-		Established: r.established.Load(),
-		Failed:      r.failed.Load(),
-		Ended:       r.ended.Load(),
-		TxPackets:   tx,
-		RxPackets:   rx,
-		TxBytes:     txB,
-		RxBytes:     rxB,
-		Lost:        lost,
-		StartedAt:   r.startedAt.Format(time.RFC3339),
-	}
+	return r.stats()
 }
 
 // launchLoop es el cerebro de la carga: cada "tick" (según cps) lanza una llamada
@@ -244,12 +299,22 @@ func (g *Generator) launchLoop(ctx context.Context, r *run) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// Tope total de llamadas, si se fijó: dejamos de lanzar nuevas.
+			// Tope total alcanzado: no se lanzan nuevas y, cuando termine la última
+			// viva, la prueba acaba SOLA (foto final en Snapshot, hueco libre).
 			if r.spec.MaxCalls > 0 && r.launched.Load() >= r.spec.MaxCalls {
+				if r.active.Load()+r.pending.Load() == 0 {
+					go g.finish(r) // en otra goroutine: finish espera también a este loop
+					return
+				}
 				continue
 			}
 			// Reponemos hasta alcanzar N establecidas (contando las en vuelo).
+			// launched/pending se cuentan AQUÍ y no en el worker: si se contaran allí,
+			// varios ticks podrían colarse antes de que el worker arranque y se
+			// sobrepasaría MaxCalls (y el autofin de arriba vería un 0 falso).
 			if r.active.Load()+r.pending.Load() < int64(r.spec.Concurrent) {
+				r.launched.Add(1)
+				r.pending.Add(1)
 				r.wg.Add(1)
 				go g.worker(ctx, r)
 			}
@@ -259,12 +324,11 @@ func (g *Generator) launchLoop(ctx context.Context, r *run) {
 
 // worker ejecuta el ciclo de vida de UNA llamada de carga: INVITE -> 200 -> ACK,
 // arranca la media y la mantiene viva hasta el STOP (ctx) o hasta que el otro
-// extremo cuelgue (call.Done()). Actualiza los contadores agregados.
+// extremo cuelgue (call.Done()). Actualiza los contadores agregados; launched y
+// pending ya los contó el loop de lanzamiento.
 func (g *Generator) worker(ctx context.Context, r *run) {
 	defer r.wg.Done()
 	id := r.nextID.Add(1)
-	r.launched.Add(1)
-	r.pending.Add(1)
 
 	// Plano de media (RTP): abrimos el socket y preparamos la oferta SDP (con el
 	// puerto RTP real) que irá en el INVITE, tanto para el INVITE básico como para
@@ -364,6 +428,9 @@ func (g *Generator) worker(ctx context.Context, r *run) {
 		delete(r.sessions, id)
 		r.sessMu.Unlock()
 		sess.Close()
+		// Con la sesión ya cerrada (contadores quietos), su RTP pasa al acumulado:
+		// la foto de la prueba no pierde el tráfico de las llamadas colgadas.
+		r.addSessionMetrics(sess)
 	}
 	r.active.Add(-1)
 	r.ended.Add(1)
