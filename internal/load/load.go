@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -59,7 +60,20 @@ type Stats struct {
 	Pending     int64   `json:"pending"`     // en curso (dialing/ringing) AHORA
 	Established int64   `json:"established"` // total que llegaron a establecidas
 	Failed      int64   `json:"failed"`      // total fallidas (rechazo/timeout/error)
+	Cancelled   int64   `json:"cancelled"`   // en vuelo abortadas por el STOP/parada (NO son fallos del sistema bajo prueba)
 	Ended       int64   `json:"ended"`       // total terminadas (BYE/caída)
+
+	// Desglose de Failed por causa: código SIP de rechazo ("486", "503"...),
+	// "timeout" (nadie contestó) o "error" (transporte/escenario). Es lo que
+	// permite leer una prueba contra un SBC: no es lo mismo que rechace el
+	// destino a que el SBC esté saturado.
+	FailedBy map[string]int64 `json:"failed_by,omitempty"`
+
+	// PDD (Post-Dial Delay): latencia INVITE -> respuesta final 2xx, en ms,
+	// sobre las llamadas establecidas. 0 si aún no hay muestras.
+	PDDMinMs float64 `json:"pdd_min_ms"`
+	PDDAvgMs float64 `json:"pdd_avg_ms"`
+	PDDMaxMs float64 `json:"pdd_max_ms"`
 	TxPackets   uint64  `json:"tx_packets"`  // RTP enviado (agregado de las activas)
 	RxPackets   uint64  `json:"rx_packets"`  // RTP recibido (agregado)
 	TxBytes     uint64  `json:"tx_bytes"`
@@ -84,7 +98,17 @@ type run struct {
 	active      atomic.Int64
 	established atomic.Int64
 	failed      atomic.Int64
+	cancelled   atomic.Int64
 	ended       atomic.Int64
+
+	failMu sync.Mutex
+	failBy map[string]int64 // causa -> total (desglose de failed)
+
+	pddMu  sync.Mutex
+	pddN   int64
+	pddSum time.Duration
+	pddMin time.Duration
+	pddMax time.Duration
 
 	sessMu   sync.Mutex
 	sessions map[uint64]*media.Session // activas con media, para agregar métricas
@@ -98,6 +122,47 @@ type run struct {
 	txBytes   atomic.Uint64
 	rxBytes   atomic.Uint64
 	lost      atomic.Int64
+}
+
+// abortPending cierra la cuenta de una llamada que NO llegó a establecerse. Si el
+// contexto de la carga ya está cancelado, el aborto lo provocó nuestro STOP (o la
+// parada del agente): se cuenta como cancelada, NO como fallo — el sistema bajo
+// prueba no tuvo la culpa. El resto son fallos reales, con su causa desglosada.
+func (r *run) abortPending(ctx context.Context, err error) {
+	r.pending.Add(-1)
+	if ctx.Err() != nil {
+		r.cancelled.Add(1)
+		return
+	}
+	r.failed.Add(1)
+	r.countFail(sipcore.FailureCause(err))
+}
+
+// countFail registra un fallo de establecimiento con su causa (código SIP,
+// "timeout", "error"). El total ya lo lleva el contador atómico failed; aquí
+// solo se mantiene el desglose.
+func (r *run) countFail(causa string) {
+	r.failMu.Lock()
+	if r.failBy == nil {
+		r.failBy = make(map[string]int64)
+	}
+	r.failBy[causa]++
+	r.failMu.Unlock()
+}
+
+// observePDD registra la latencia de establecimiento (INVITE -> 2xx) de una
+// llamada contestada, para el min/avg/max agregado.
+func (r *run) observePDD(d time.Duration) {
+	r.pddMu.Lock()
+	r.pddN++
+	r.pddSum += d
+	if r.pddMin == 0 || d < r.pddMin {
+		r.pddMin = d
+	}
+	if d > r.pddMax {
+		r.pddMax = d
+	}
+	r.pddMu.Unlock()
 }
 
 // addSessionMetrics vuelca a los acumulados las métricas de una sesión que se
@@ -134,6 +199,27 @@ func (r *run) stats() Stats {
 		scName = r.spec.Scenario.Name
 	}
 
+	// Copia del desglose de fallos (el mapa vivo sigue mutando en los workers).
+	var failBy map[string]int64
+	r.failMu.Lock()
+	if len(r.failBy) > 0 {
+		failBy = make(map[string]int64, len(r.failBy))
+		for k, v := range r.failBy {
+			failBy[k] = v
+		}
+	}
+	r.failMu.Unlock()
+
+	// PDD agregado, en milisegundos.
+	var pddMin, pddAvg, pddMax float64
+	r.pddMu.Lock()
+	if r.pddN > 0 {
+		pddMin = redondeaMs(r.pddMin)
+		pddAvg = redondeaMs(r.pddSum / time.Duration(r.pddN))
+		pddMax = redondeaMs(r.pddMax)
+	}
+	r.pddMu.Unlock()
+
 	return Stats{
 		Running:     true,
 		Stopping:    r.stopping.Load(),
@@ -147,7 +233,12 @@ func (r *run) stats() Stats {
 		Pending:     r.pending.Load(),
 		Established: r.established.Load(),
 		Failed:      r.failed.Load(),
+		Cancelled:   r.cancelled.Load(),
 		Ended:       r.ended.Load(),
+		FailedBy:    failBy,
+		PDDMinMs:    pddMin,
+		PDDAvgMs:    pddAvg,
+		PDDMaxMs:    pddMax,
 		TxPackets:   tx,
 		RxPackets:   rx,
 		TxBytes:     txB,
@@ -155,6 +246,12 @@ func (r *run) stats() Stats {
 		Lost:        lost,
 		StartedAt:   r.startedAt.Format(time.RFC3339),
 	}
+}
+
+// redondeaMs pasa una duración a milisegundos con 2 decimales (legible en la web
+// sin perder las décimas, que en LAN son toda la medida).
+func redondeaMs(d time.Duration) float64 {
+	return math.Round(float64(d)/float64(time.Millisecond)*100) / 100
 }
 
 // Generator lanza y sostiene la carga sobre el Core de un agente. Una sola
@@ -348,6 +445,7 @@ func (g *Generator) worker(ctx context.Context, r *run) {
 
 	// Establecimiento: por escenario (señalización dirigida por el YAML, sostenida
 	// hasta el STOP) o por el INVITE básico de la plantilla.
+	t0 := time.Now() // arranque del PDD (INVITE -> 2xx)
 	var call *sipcore.UACCall
 	var err error
 	if r.spec.Scenario != nil {
@@ -372,8 +470,7 @@ func (g *Generator) worker(ctx context.Context, r *run) {
 		call, err = g.core.DialInvite(ctx, inv)
 	}
 	if err != nil {
-		r.pending.Add(-1)
-		r.failed.Add(1)
+		r.abortPending(ctx, err)
 		closeSession(sess)
 		return
 	}
@@ -382,17 +479,19 @@ func (g *Generator) worker(ctx context.Context, r *run) {
 	// eso ya está hecho dentro de Establish.
 	if r.spec.Scenario == nil {
 		if err := call.WaitAnswer(ctx); err != nil {
-			r.pending.Add(-1)
-			r.failed.Add(1)
+			r.abortPending(ctx, err)
 			closeSession(sess)
 			return
 		}
+		r.observePDD(time.Since(t0)) // contestada: el PDD llega hasta el 2xx
 		if err := call.Ack(ctx); err != nil {
-			r.pending.Add(-1)
-			r.failed.Add(1)
+			r.abortPending(ctx, err)
 			closeSession(sess)
 			return
 		}
+	} else {
+		// Establish ya validó respuestas y envió el ACK (coste ~0 sobre el 2xx).
+		r.observePDD(time.Since(t0))
 	}
 
 	// Establecida.

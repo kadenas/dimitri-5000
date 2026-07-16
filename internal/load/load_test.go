@@ -93,6 +93,127 @@ func TestCargaSostieneYDetiene(t *testing.T) {
 	if fin.Stopping {
 		t.Fatalf("la foto final no debe quedar en Stopping: %+v", fin)
 	}
+
+	// PDD: el UAS tarda ~10 ms (RingDelay) en contestar; las muestras deben
+	// reflejarlo y mantener la coherencia min <= avg <= max.
+	if fin.PDDMinMs <= 0 || fin.PDDAvgMs < fin.PDDMinMs || fin.PDDMaxMs < fin.PDDAvgMs {
+		t.Fatalf("PDD incoherente: min=%v avg=%v max=%v", fin.PDDMinMs, fin.PDDAvgMs, fin.PDDMaxMs)
+	}
+}
+
+// TestCargaRechazoDesglose verifica el desglose de fallos por causa: un UAS que
+// responde 486 a todo debe dejar Failed=MaxCalls con FailedBy["486"], sin
+// establecidas, sin canceladas y con autofin (los rechazos también agotan el tope).
+func TestCargaRechazoDesglose(t *testing.T) {
+	const (
+		ip       = "127.0.0.1"
+		uasPort  = 35088
+		uacPort  = 35089
+		maxCalls = 3
+	)
+
+	uas, err := sipcore.New(ip, uasPort, "uas", "", nil)
+	if err != nil {
+		t.Fatalf("creando UAS: %v", err)
+	}
+	defer uas.Close()
+	uas.SetUASPolicy(sipcore.UASPolicy{RingDelay: 10 * time.Millisecond, AnswerCode: 486})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = uas.Serve(ctx, "udp", ip+":"+strconv.Itoa(uasPort)) }()
+
+	uac, err := sipcore.New(ip, uacPort, "uac", "", nil)
+	if err != nil {
+		t.Fatalf("creando UAC: %v", err)
+	}
+	defer uac.Close()
+	go func() { _ = uac.Serve(ctx, "udp", ip+":"+strconv.Itoa(uacPort)) }()
+	time.Sleep(200 * time.Millisecond)
+
+	gen := New(uac, nil)
+	spec := Spec{
+		Invite:     sipcore.RichInvite{DestHost: ip, DestPort: uasPort},
+		Concurrent: 2,
+		CPS:        50,
+		MaxCalls:   maxCalls,
+		WithMedia:  false,
+	}
+	if err := gen.Start(ctx, spec); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !waitFor(5*time.Second, func() bool { return !gen.Snapshot().Running }) {
+		t.Fatalf("la carga no autofinalizó con rechazos; stats=%+v", gen.Snapshot())
+	}
+
+	fin := gen.Snapshot()
+	if fin.Failed != maxCalls || fin.Established != 0 || fin.Cancelled != 0 {
+		t.Fatalf("contadores inesperados con rechazo: %+v", fin)
+	}
+	if fin.FailedBy["486"] != maxCalls {
+		t.Fatalf("FailedBy[486]=%d, esperado %d (desglose=%v)", fin.FailedBy["486"], maxCalls, fin.FailedBy)
+	}
+	if fin.PDDMaxMs != 0 {
+		t.Fatalf("sin llamadas contestadas no debe haber PDD: %+v", fin)
+	}
+}
+
+// TestCargaStopCancelaEnVuelo verifica que las llamadas aún sin contestar cuando
+// llega el STOP se cuentan como Cancelled y NO como Failed: el sistema bajo
+// prueba no falló, fuimos nosotros quienes abortamos.
+func TestCargaStopCancelaEnVuelo(t *testing.T) {
+	const (
+		ip      = "127.0.0.1"
+		uasPort = 35092
+		uacPort = 35093
+	)
+
+	uas, err := sipcore.New(ip, uasPort, "uas", "", nil)
+	if err != nil {
+		t.Fatalf("creando UAS: %v", err)
+	}
+	defer uas.Close()
+	// Ring larguísimo: la llamada seguirá en vuelo cuando ordenemos el STOP.
+	uas.SetUASPolicy(sipcore.UASPolicy{RingDelay: 30 * time.Second, AnswerCode: 200})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = uas.Serve(ctx, "udp", ip+":"+strconv.Itoa(uasPort)) }()
+
+	uac, err := sipcore.New(ip, uacPort, "uac", "", nil)
+	if err != nil {
+		t.Fatalf("creando UAC: %v", err)
+	}
+	defer uac.Close()
+	go func() { _ = uac.Serve(ctx, "udp", ip+":"+strconv.Itoa(uacPort)) }()
+	time.Sleep(200 * time.Millisecond)
+
+	gen := New(uac, nil)
+	spec := Spec{
+		Invite:     sipcore.RichInvite{DestHost: ip, DestPort: uasPort},
+		Concurrent: 2,
+		CPS:        50,
+		WithMedia:  false,
+	}
+	if err := gen.Start(ctx, spec); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !waitFor(2*time.Second, func() bool { return gen.Snapshot().Pending == 2 }) {
+		t.Fatalf("no hay llamadas en vuelo; stats=%+v", gen.Snapshot())
+	}
+
+	gen.Stop()
+	if !waitFor(3*time.Second, func() bool { return !gen.Snapshot().Running }) {
+		t.Fatalf("la carga no drenó tras STOP; stats=%+v", gen.Snapshot())
+	}
+
+	fin := gen.Snapshot()
+	if fin.Cancelled != 2 {
+		t.Fatalf("Cancelled=%d, esperado 2 (las dos en vuelo): %+v", fin.Cancelled, fin)
+	}
+	if fin.Failed != 0 || len(fin.FailedBy) != 0 {
+		t.Fatalf("el STOP no debe contar como fallo: %+v", fin)
+	}
 }
 
 // TestCargaMaxCallsAutofin verifica que, con un tope MaxCalls y un UAS que cuelga

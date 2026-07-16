@@ -1,7 +1,38 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-07-16 (sesión 17: carga — foto final tras STOP, autofin con MaxCalls y RTP acumulado)
+Fecha: 2026-07-16 (sesión 18: carga — desglose de fallos por causa, PDD y canceladas aparte)
+
+## Sesión 18 — Carga: desglose de Failed por causa + PDD (INVITE->2xx)
+- OBJETIVO: punto 3 del plan (sesión 16). De regalo cae el menor 5b: las llamadas
+  en vuelo abortadas por el STOP ya no ensucian Failed.
+- CAMBIOS:
+  - sipcore/call.go: NUEVO FailureCause(err) string — clasifica en texto neutro el
+    fallo de un INVITE sin exponer sipgo: "486"/"503"/... (ErrDialogResponse, que
+    sipgo devuelve unas veces POR VALOR y otras POR PUNTERO: se cazan ambas),
+    "timeout" (sip.ErrTransactionTimeout o DeadlineExceeded), "cancelada"
+    (context.Canceled), "error" (resto).
+  - load/load.go: Stats gana Cancelled, FailedBy map[string]int64 ("failed_by") y
+    PDDMinMs/PDDAvgMs/PDDMaxMs ("pdd_*_ms", ms con 2 decimales). En el run:
+    abortPending() decide — ctx cancelado => Cancelled (fuimos nosotros, STOP o
+    parada del agente); si no => Failed + countFail(FailureCause(err)). El PDD se
+    observa al 2xx (camino básico: tras WaitAnswer, antes del ACK; con escenario:
+    al volver Establish, que ya incluye el ACK) con min/avg/max bajo mutex.
+  - webui/static/js/app.js: chips nuevos en el panel de carga — CANCELLED (si >0),
+    fila de desglose FAIL <causa> y fila PDD MIN/AVG/MAX.
+- VERIFICADO: tests nuevos sipcore/failure_test.go (8 casos de FailureCause, incl.
+  valor/puntero/envuelto) y en load: TestCargaRechazoDesglose (UAS 486: Failed=3,
+  FailedBy[486]=3, autofin también con rechazos, sin PDD) y
+  TestCargaStopCancelaEnVuelo (ring 30s + STOP: Cancelled=2, Failed=0).
+  go test -race ./internal/load OK. Suite completa en verde. E2E con la app real:
+  foto final failed_by={"486":3} contra agente 486, y pdd 0.49/1.10/1.68 ms con
+  media contra agente 200.
+- HALLAZGO (no tocado): `go test -race ./internal/sipcore` falla por una DATA RACE
+  DENTRO de sipgo v1.4.0 (Server.ListenAndServe, server.go:105 vs 128), disparada
+  por TestOptionsTrunk. Preexistente (falla igual sin estos cambios). Opciones el
+  día que moleste: subir de versión sipgo o serializar el arranque del Serve.
+- PRÓXIMO (del plan): 4) duración de llamada opcional en la Spec (churn);
+  5a) menor: ticker limita ~1000 cps y pierde ticks (token-bucket).
 
 ## Sesión 17 — Carga: foto final, autofin con MaxCalls y métricas RTP que no se pierden
 - OBJETIVO: primera mejora del plan de la sesión 16 (puntos 1 y 2, que van juntos:

@@ -972,8 +972,25 @@ function renderLoad(datos) {
     chip("LAUNCHED", s.launched) +
     chip("ESTABLISHED", s.established) +
     chip("FAILED", s.failed, s.failed > 0 ? "bad" : "") +
+    (s.cancelled > 0 ? chip("CANCELLED", s.cancelled) : "") +
     chip("ENDED", s.ended) +
     "</div>";
+  // Desglose de fallos por causa: código SIP de rechazo, timeout o error.
+  if (s.failed_by && Object.keys(s.failed_by).length) {
+    html += '<div class="load-row">' +
+      Object.keys(s.failed_by).sort()
+        .map((c) => chip("FAIL " + esc(c).toUpperCase(), s.failed_by[c], "bad"))
+        .join("") +
+      "</div>";
+  }
+  // PDD (INVITE -> 2xx) de las llamadas contestadas.
+  if (s.pdd_max_ms > 0) {
+    html += '<div class="load-row">' +
+      chip("PDD MIN", s.pdd_min_ms + " ms") +
+      chip("PDD AVG", s.pdd_avg_ms + " ms") +
+      chip("PDD MAX", s.pdd_max_ms + " ms") +
+      "</div>";
+  }
   if (s.with_media) {
     html += '<div class="load-row">' +
       chip("RTP &uarr; pkts", s.tx_packets) +

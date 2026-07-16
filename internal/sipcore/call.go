@@ -15,7 +15,9 @@ package sipcore
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -172,6 +174,36 @@ func (c *Core) DialInvite(ctx context.Context, ri RichInvite) (*UACCall, error) 
 		return nil, fmt.Errorf("enviando INVITE: %w", err)
 	}
 	return &UACCall{session: session}, nil
+}
+
+// FailureCause clasifica el error de un INVITE que no llegó a establecerse, en
+// texto neutro para las capas superiores (que no conocen sipgo):
+//   - "486", "503", ...: el remoto respondió ese código final de rechazo;
+//   - "timeout": venció la transacción (Timer B: nadie contestó al INVITE);
+//   - "cancelada": la abortó nuestro propio contexto (STOP, parada del agente);
+//   - "error": lo demás (socket, resolución, escenario incumplido).
+//
+// Es la clave del desglose de fallos del motor de carga: contra un SBC importa
+// distinguir un 486 (el destino rechaza) de un 503 (el SBC saturado) o de un
+// timeout (nadie responde).
+func FailureCause(err error) string {
+	// sipgo devuelve la respuesta de rechazo como ErrDialogResponse, unas veces
+	// por valor y otras por puntero: hay que cazar ambas formas.
+	var pe *sipgo.ErrDialogResponse
+	if errors.As(err, &pe) && pe.Res != nil {
+		return strconv.Itoa(int(pe.Res.StatusCode))
+	}
+	var ve sipgo.ErrDialogResponse
+	if errors.As(err, &ve) && ve.Res != nil {
+		return strconv.Itoa(int(ve.Res.StatusCode))
+	}
+	if errors.Is(err, sip.ErrTransactionTimeout) || errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "cancelada"
+	}
+	return "error"
 }
 
 // WaitAnswer bloquea hasta recibir la respuesta final del INVITE. Devuelve nil
