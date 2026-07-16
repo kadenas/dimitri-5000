@@ -22,7 +22,12 @@ de ncurses.
   lado que llama (UAC) como del que contesta (UAS), con temporizaciones,
   respuestas opcionales y variables. Hay ejemplos en `examples/scenarios/`.
 - **Pruebas de carga**: N llamadas a una tasa configurable (cps), cada una
-  ejecutando un escenario completo, con estadísticas en vivo.
+  ejecutando un escenario completo, con estadísticas en vivo. Puedes fijar el
+  número A (llamante) y el número B (llamado) desde el panel: todas las
+  llamadas de la prueba salen con esa numeración (en el From y en el
+  To/Request-URI), lista para enrutarla por número en tu SBC o PBX; si la
+  carga usa un escenario, esos números pisan sus variables `{caller}` y
+  `{callee}`.
 - **Monitorizar troncales** con OPTIONS: estado, código de respuesta y RTT de
   cada trunk, con umbral de fallos configurable.
 - **Ver qué pasa por el cable**: visor de trazas tipo SBC con todas las

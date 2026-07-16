@@ -1013,6 +1013,10 @@ document.getElementById("load-form").addEventListener("submit", async (ev) => {
     to: toAgent ? "" : to,
     dest_host: destHost,
     dest_port: destPort,
+    // Números A/B: identidades FIJAS de todas las llamadas de la prueba (el SBC
+    // enruta por el número B; el A viaja en el From).
+    from_user: val("load-from-user"),
+    to_user: val("load-to-user"),
   };
 
   try {

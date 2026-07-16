@@ -28,6 +28,12 @@ type Runner struct {
 	core   *sipcore.Core
 	target string // URI de destino, p. ej. "sip:127.0.0.1:5060"
 	log    *slog.Logger
+
+	// Vars son variables impuestas desde fuera (p. ej. los números A/B del panel
+	// de carga). PISAN a las variables del escenario: si el YAML define caller o
+	// callee y aquí llegan otros valores, mandan estos. Así el operador controla
+	// la numeración sin editar el YAML.
+	Vars map[string]string
 }
 
 // New crea un runner para un destino dado.
@@ -275,6 +281,12 @@ func (r *Runner) buildVars(sc *scenario.Scenario) map[string]string {
 	// Variables del escenario, resolviendo placeholders internos (varias pasadas
 	// para casos como domain: "{remote_host}").
 	for k, v := range sc.Variables {
+		vars[k] = v
+	}
+	// Variables impuestas desde fuera (números A/B de la carga): pisan a las del
+	// escenario ANTES de resolver placeholders, para que un From con "{caller}"
+	// salga ya con el número del panel.
+	for k, v := range r.Vars {
 		vars[k] = v
 	}
 	for pasada := 0; pasada < 5; pasada++ {

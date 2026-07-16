@@ -1,7 +1,42 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-07-02 (sesión 15: README reescrito para usuarios ajenos al proyecto)
+Fecha: 2026-07-16 (sesión 16: números A/B fijos en el panel de carga)
+
+## Sesión 16 — Carga: números A y B fijos desde el panel
+- OBJETIVO del usuario: poder fijar número A (llamante) y número B (llamado) en el
+  panel LOAD TEST, CONSTANTES en todas las llamadas de la prueba, para enrutar por
+  numeración en un SBC/Kamailio/Asterisk.
+- CAMBIOS:
+  - webui/static/index.html + app.js: campos NÚMERO A / NÚMERO B en el panel de
+    carga; viajan como from_user/to_user a /api/load/start (el backend YA los
+    aceptaba vía buildCallSpec; solo faltaba exponerlos). Hint actualizado.
+  - runner/runner.go: nuevo campo exportado Runner.Vars — variables impuestas desde
+    fuera que PISAN a las del escenario en buildVars ANTES de resolver placeholders
+    (un From con "{caller}" sale ya con el número del panel).
+  - load/load.go: en el camino con escenario, identityVars() traduce
+    FromUser/ToUser -> {caller}/{callee} y se pasan como rn.Vars; scenarioTarget()
+    pone el número B como user del Request-URI (el campo por el que enruta el SBC).
+    Con los campos vacíos el YAML manda, como antes. El camino INVITE básico no
+    necesitó código (RichInvite ya lleva From/To/R-URI).
+  - README.md y SCENARIO_FORMAT.md: documentado el comportamiento (A/B fijos; con
+    escenario pisan {caller}/{callee}).
+- VERIFICADO: tests nuevos (runner/vars_test.go: override + resolución de
+  {remote_host}; load/identity_test.go: scenarioTarget e identityVars) y suite
+  completa en verde. E2E real por API en loopback (modo web, agente UAS creado por
+  API, carga en ambos caminos): todos los INVITE con
+  sip:B@host R-URI, From sip:A@..., tags distintos por diálogo. El usuario lo
+  validó además con sngrep contra 192.168.0.137 (RTP G.711 incluido).
+- REVISIÓN de mejora del motor de carga acordada con el usuario (pendiente, en orden):
+  1) conservar la foto final de Stats tras el STOP (hoy Snapshot queda vacío al
+     drenar) + autofinalizar cuando MaxCalls se alcanzó y active+pending==0;
+  2) BUG: las métricas RTP agregadas solo suman sesiones VIVAS (Snapshot recorre
+     r.sessions y el worker borra la sesión al colgar): acumular al cerrar;
+  3) desglose de Failed por causa (código SIP/timeout/transporte) + PDD
+     (INVITE->200) min/avg/max;
+  4) duración de llamada opcional en la Spec (modo churn);
+  5) menor: ticker limita a ~1000 cps y pierde ticks bajo carga; el STOP cuenta
+     como Failed las llamadas en vuelo canceladas.
 
 ## Sesión 15 — README: actualización y reescritura "humana"
 - PROBLEMA: el README decía "v0: el motor de llamadas (INVITE) está en desarrollo",

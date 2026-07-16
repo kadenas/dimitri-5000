@@ -331,6 +331,14 @@
           <input type="text" id="load-to" placeholder="sip:192.168.1.10:5060" autocomplete="off" />
         </label>
         <label class="field">
+          <span>NÚMERO&nbsp;A&nbsp;(from)</span>
+          <input type="text" id="load-from-user" placeholder="600100100" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>NÚMERO&nbsp;B&nbsp;(to)</span>
+          <input type="text" id="load-to-user" placeholder="910200200" autocomplete="off" />
+        </label>
+        <label class="field">
           <span>SCENARIO&nbsp;(uac)</span>
           <select id="load-scenario"><option value="">(INVITE básico)</option></select>
         </label>
@@ -353,7 +361,7 @@
         <button type="submit" class="btn-dial" id="load-start">START ▸</button>
         <button type="button" class="btn-mini danger" id="load-stop">STOP</button>
       </form>
-      <div class="hint" id="load-hint">Sostiene N llamadas simultáneas con RTP; la CPS regula la subida y la reposición de las que caen. STOP las cuelga todas con BYE.</div>
+      <div class="hint" id="load-hint">Sostiene N llamadas simultáneas con RTP; la CPS regula la subida y la reposición de las que caen. STOP las cuelga todas con BYE. NÚMERO A/B son FIJOS en todas las llamadas (From y To/Request-URI) para poder enrutar por numeración en el SBC; con escenario pisan {caller}/{callee}.</div>
 
       <!-- Panel de métricas agregadas (en vivo) -->
       <div id="load-stats" class="load-stats"></div>

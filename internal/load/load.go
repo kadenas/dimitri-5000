@@ -288,6 +288,9 @@ func (g *Generator) worker(ctx context.Context, r *run) {
 	var err error
 	if r.spec.Scenario != nil {
 		rn := runner.New(g.core, scenarioTarget(r.spec.Invite), g.log)
+		// Los números A/B del panel pisan {caller}/{callee} del YAML: TODAS las
+		// llamadas de la prueba salen con la misma numeración (enrutable en el SBC).
+		rn.Vars = identityVars(r.spec.Invite)
 		// Establish hace INVITE -> respuestas -> ACK: la llamada queda establecida.
 		call, err = rn.Establish(ctx, r.spec.Scenario, mediaHdr, mediaBody)
 	} else {
@@ -389,13 +392,36 @@ func (g *Generator) startMedia(ctx context.Context, call *sipcore.UACCall, r *ru
 
 // scenarioTarget construye la URI de destino (Request-URI) para el runner a partir
 // del destino real de la Spec (el SBC/peer). El escenario aporta las identidades
-// (From/To, cabeceras); aquí solo decidimos a dónde se envía de verdad el paquete.
+// (From/To, cabeceras); aquí decidimos a dónde se envía de verdad el paquete y,
+// si hay número B, lo ponemos como user del Request-URI: es el campo por el que
+// un SBC/Kamailio/PBX enruta la llamada.
 func scenarioTarget(inv sipcore.RichInvite) string {
-	uri := fmt.Sprintf("sip:%s:%d", inv.DestHost, inv.DestPort)
+	uri := "sip:"
+	if inv.ToUser != "" {
+		uri += inv.ToUser + "@"
+	}
+	uri += fmt.Sprintf("%s:%d", inv.DestHost, inv.DestPort)
 	if inv.Transport == "tcp" {
 		uri += ";transport=tcp"
 	}
 	return uri
+}
+
+// identityVars traduce los números A/B del panel a variables de escenario
+// ({caller}/{callee}, la convención documentada en SCENARIO_FORMAT.md). Solo se
+// imponen los que el operador rellenó; devolver nil deja el YAML intacto.
+func identityVars(inv sipcore.RichInvite) map[string]string {
+	vars := make(map[string]string, 2)
+	if inv.FromUser != "" {
+		vars["caller"] = inv.FromUser
+	}
+	if inv.ToUser != "" {
+		vars["callee"] = inv.ToUser
+	}
+	if len(vars) == 0 {
+		return nil
+	}
+	return vars
 }
 
 // closeSession cierra una sesión de media si no es nil (azúcar para los caminos de error).

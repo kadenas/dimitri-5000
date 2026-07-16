@@ -94,7 +94,10 @@ Se declara **cada** mensaje esperado. Los provisionales (100/180) se marcan
 
 Sintaxis con llaves: `{nombre}`.
 
-- **Variables del escenario:** las definidas en `variables:`.
+- **Variables del escenario:** las definidas en `variables:`. Ojo: en una
+  prueba de carga, los números A y B del panel (si se rellenan) PISAN a
+  `caller` y `callee` — así el operador controla la numeración sin editar
+  el YAML.
 - **Internas automáticas** (las rellena el runner): `{call_id}`, `{branch}`,
   `{cseq}`, `{local_ip}`, `{local_port}`, `{remote_host}`, `{remote_port}`.
 - **Captura desde mensajes** (en `save`/`match`):
