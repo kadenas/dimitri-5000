@@ -354,6 +354,10 @@
           <span>MAX&nbsp;(0=∞)</span>
           <input type="number" id="load-max" value="0" min="0" />
         </label>
+        <label class="field">
+          <span>DUR&nbsp;s&nbsp;(0=∞)</span>
+          <input type="number" id="load-dur" value="0" min="0" step="0.5" />
+        </label>
         <label class="field check">
           <span>MEDIA</span>
           <input type="checkbox" id="load-media" checked />
@@ -361,7 +365,7 @@
         <button type="submit" class="btn-dial" id="load-start">START ▸</button>
         <button type="button" class="btn-mini danger" id="load-stop">STOP</button>
       </form>
-      <div class="hint" id="load-hint">Sostiene N llamadas simultáneas con RTP; la CPS regula la subida y la reposición de las que caen. STOP las cuelga todas con BYE. NÚMERO A/B son FIJOS en todas las llamadas (From y To/Request-URI) para poder enrutar por numeración en el SBC; con escenario pisan {caller}/{callee}.</div>
+      <div class="hint" id="load-hint">Sostiene N llamadas simultáneas con RTP; la CPS regula la subida y la reposición de las que caen. DUR cuelga cada llamada a los N segundos y se repone con una nueva (churn continuo; 0 = viven hasta el STOP). STOP las cuelga todas con BYE. NÚMERO A/B son FIJOS en todas las llamadas (From y To/Request-URI) para poder enrutar por numeración en el SBC; con escenario pisan {caller}/{callee}.</div>
 
       <!-- Panel de métricas agregadas (en vivo) -->
       <div id="load-stats" class="load-stats"></div>

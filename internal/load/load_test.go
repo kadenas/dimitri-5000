@@ -283,6 +283,69 @@ func TestCargaMaxCallsAutofin(t *testing.T) {
 	gen.Stop()
 }
 
+// TestCargaDuracionChurn verifica la duración de llamada de la Spec (churn): el
+// UAS NO cuelga nunca, pero cada llamada caduca a los CallDur y el motor la
+// cuelga con BYE y la repone. Con MaxCalls la prueba acaba sola: si la duración
+// no funcionara, las 2 primeras llamadas vivirían para siempre y el test
+// expiraría sin autofin.
+func TestCargaDuracionChurn(t *testing.T) {
+	const (
+		ip       = "127.0.0.1"
+		uasPort  = 35094
+		uacPort  = 35095
+		maxCalls = 4
+	)
+
+	uas, err := sipcore.New(ip, uasPort, "uas", "", nil)
+	if err != nil {
+		t.Fatalf("creando UAS: %v", err)
+	}
+	defer uas.Close()
+	// Sin HoldTime: el UAS jamás cuelga; solo la duración de la Spec termina llamadas.
+	uas.SetUASPolicy(sipcore.UASPolicy{RingDelay: 10 * time.Millisecond, AnswerCode: 200})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = uas.Serve(ctx, "udp", ip+":"+strconv.Itoa(uasPort)) }()
+
+	uac, err := sipcore.New(ip, uacPort, "uac", "", nil)
+	if err != nil {
+		t.Fatalf("creando UAC: %v", err)
+	}
+	defer uac.Close()
+	go func() { _ = uac.Serve(ctx, "udp", ip+":"+strconv.Itoa(uacPort)) }()
+	time.Sleep(200 * time.Millisecond)
+
+	gen := New(uac, nil)
+	spec := Spec{
+		Invite:     sipcore.RichInvite{DestHost: ip, DestPort: uasPort},
+		Concurrent: 2,
+		CPS:        50,
+		MaxCalls:   maxCalls,
+		CallDur:    150 * time.Millisecond,
+		WithMedia:  false,
+	}
+	if err := gen.Start(ctx, spec); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Sin Stop: el churn agota MaxCalls y la prueba acaba sola.
+	if !waitFor(5*time.Second, func() bool { return !gen.Snapshot().Running }) {
+		t.Fatalf("la carga no autofinalizó con churn; stats=%+v", gen.Snapshot())
+	}
+
+	fin := gen.Snapshot()
+	if fin.Launched != maxCalls || fin.Established != maxCalls || fin.Ended != maxCalls {
+		t.Fatalf("churn incompleto: %+v", fin)
+	}
+	if fin.Failed != 0 || fin.Cancelled != 0 {
+		t.Fatalf("colgar por duración no es fallo ni cancelación: %+v", fin)
+	}
+	if fin.CallSecs != 0.15 {
+		t.Fatalf("CallSecs=%v, esperado 0.15 (eco de la Spec en la foto)", fin.CallSecs)
+	}
+}
+
 // TestCargaConEscenario verifica que el motor de carga puede establecer cada
 // llamada ejecutando un ESCENARIO UAC (en vez del INVITE básico): sube hasta N
 // concurrentes y las sostiene, ignorando las pausas y el BYE del escenario (la

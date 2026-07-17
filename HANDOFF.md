@@ -1,7 +1,48 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-07-16 (sesión 18: carga — desglose de fallos por causa, PDD y canceladas aparte)
+Fecha: 2026-07-17 (sesión 19: carga — duración de llamada (churn) y token-bucket; plan de carga COMPLETO)
+
+## Sesión 19 — Carga: duración de llamada (churn) + token-bucket para cps altas
+- OBJETIVO: cerrar el plan de la sesión 16 con los dos puntos restantes: 4) duración
+  de llamada opcional en la Spec (churn) y 5a) sustituir el ticker de lanzamiento
+  (techo ~1000 cps y ticks perdidos) por un token bucket.
+- CAMBIOS:
+  - load/load.go: Spec gana CallDur (0 = indefinida, comportamiento anterior). El
+    worker arma un temporizador por llamada: cumplida la duración, BYE nuestro y el
+    loop repone con una llamada NUEVA (churn continuo; cuenta como Ended, no como
+    fallo). Stats ecoa la duración en CallSecs ("call_secs"). launchLoop pasa a
+    tick FIJO de 20 ms + bucket: lanza una llamada por ficha disponible.
+  - load/bucket.go NUEVO: token bucket didáctico — las fichas se devengan por
+    TIEMPO REAL transcurrido (cps altas = varias fichas por vuelta, sin techo; un
+    retraso del loop no pierde llamadas) con ráfaga limitada a 100 ms de cps
+    (mínimo 1) para no soltar un golpe de llamadas al liberarse hueco tras un rato
+    con el objetivo N cubierto. toma() va la última en la condición del loop: si
+    no toca lanzar, la ficha no se gasta.
+  - webui: loadReq gana call_secs (server.go); campo DUR s (0=∞) en el panel LOAD
+    TEST (index.html), viaja como call_secs y se pinta como chip CALL DUR (app.js).
+- VERIFICADO: tests nuevos bucket_test.go (ritmo exacto, cps>1000, retrasos que no
+  pierden fichas, tope de ráfaga) y TestCargaDuracionChurn (UAS que nunca cuelga +
+  CallDur 150ms + MaxCalls 4: churn completo con autofin, 0 fallos). go test -race
+  ./internal/load OK, suite completa y vet en verde. E2E con la app real:
+  9 llamadas de 2 s → autofin con RTP exacto (900 paquetes = 9×2s×50pps);
+  500 llamadas a 2000 cps lanzadas en <400 ms (antes techo ~1000 cps).
+- AUDITORÍA CSeq (petición del usuario, en el cable con /api/trace): CORRECTO.
+  INVITE n → ACK n; re-INVITEs HOLD/RESUME n+1/n+2 con ACK del mismo número
+  (RFC 3261 §13.2.2.4); BYE n+3; respuestas ecoan el CSeq; CANCEL con el MISMO
+  número que el INVITE (§9.1) + 487 + ACK n — y la carga lo cuenta cancelled=1.
+- HALLAZGO (no tocado): colgar desde la WEB una llamada aún SONANDO no envía
+  CANCEL — control.go:202 espera la respuesta con el contexto del agente y el
+  canal rec.hangup solo se consulta tras establecerse (control.go:243): el colgado
+  queda aplazado y sale como BYE tras el descuelgue. El motor de carga NO lo
+  sufre (su STOP cancela el contexto y sipgo emite el CANCEL). Arreglo candidato:
+  derivar el contexto de WaitAnswerObserved también de rec.hangup.
+- MENOR: /api/agents/uas-scenario espera "agent_id" pero el comentario de la ruta
+  (server.go) dice {id, ...}.
+- PRÓXIMO: el plan de carga está COMPLETO. Candidatos: CANCEL al colgar en ring
+  (hallazgo de arriba); ordenar/filtrar/exportar trazas; PAI/Diversion en traza;
+  HOLD desde UAS; runner reason/save/match/CSV; partir webui/server.go (~1060
+  líneas); tests de control/webui; data race de sipgo v1.4.0 con -race.
 
 ## Sesión 18 — Carga: desglose de Failed por causa + PDD (INVITE->2xx)
 - OBJETIVO: punto 3 del plan (sesión 16). De regalo cae el menor 5b: las llamadas

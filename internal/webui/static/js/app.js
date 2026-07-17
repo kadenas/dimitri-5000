@@ -967,6 +967,7 @@ function renderLoad(datos) {
     chip("ACTIVE", s.active, s.active >= s.target ? "ok" : "") +
     chip("PENDING", s.pending) +
     chip("CPS", s.cps) +
+    (s.call_secs > 0 ? chip("CALL DUR", s.call_secs + "s") : "") +
     "</div>" +
     '<div class="load-row">' +
     chip("LAUNCHED", s.launched) +
@@ -1038,6 +1039,7 @@ document.getElementById("load-form").addEventListener("submit", async (ev) => {
     concurrent: parseInt(val("load-n"), 10) || 0,
     cps: parseFloat(val("load-cps")) || 0,
     max_calls: parseInt(val("load-max"), 10) || 0,
+    call_secs: parseFloat(val("load-dur")) || 0,
     with_media: document.getElementById("load-media").checked,
     scenario: document.getElementById("load-scenario").value || "",
     to: toAgent ? "" : to,

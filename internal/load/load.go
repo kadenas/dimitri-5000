@@ -41,6 +41,7 @@ type Spec struct {
 	Concurrent int                // N llamadas establecidas simultáneas a sostener
 	CPS        float64            // ritmo de lanzamiento y reposición (llamadas/seg)
 	MaxCalls   int64              // tope total de INVITEs (0 = sin tope: reposición indefinida)
+	CallDur    time.Duration      // duración de cada llamada: cumplida, colgamos NOSOTROS con BYE y el loop la repone (churn). 0 = indefinida (hasta STOP o BYE remoto)
 	Audio      []int16            // PCM 8 kHz mono a enviar por RTP (nil = tono sintético)
 	WithMedia  bool               // abrir RTP por llamada (false = solo señalización)
 	Scenario   *scenario.Scenario // si != nil, cada llamada ejecuta este escenario UAC (señalización) en vez del INVITE básico
@@ -53,6 +54,7 @@ type Stats struct {
 	Target      int     `json:"target"`      // N concurrentes objetivo
 	CPS         float64 `json:"cps"`         // ritmo configurado
 	MaxCalls    int64   `json:"max_calls"`   // tope total (0 = sin tope)
+	CallSecs    float64 `json:"call_secs,omitempty"` // duración configurada por llamada, en segundos (0 = indefinida)
 	WithMedia   bool    `json:"with_media"`  // si se envía RTP
 	Scenario    string  `json:"scenario,omitempty"` // nombre del escenario por llamada (vacío = INVITE básico)
 	Launched    int64   `json:"launched"`    // INVITEs enviados (acumulado)
@@ -226,6 +228,7 @@ func (r *run) stats() Stats {
 		Target:      r.spec.Concurrent,
 		CPS:         r.spec.CPS,
 		MaxCalls:    r.spec.MaxCalls,
+		CallSecs:    r.spec.CallDur.Seconds(),
 		WithMedia:   r.spec.WithMedia,
 		Scenario:    scName,
 		Launched:    r.launched.Load(),
@@ -282,6 +285,9 @@ func (g *Generator) Start(parent context.Context, spec Spec) error {
 	}
 	if spec.CPS <= 0 {
 		spec.CPS = 10 // ritmo por defecto sensato
+	}
+	if spec.CallDur < 0 {
+		spec.CallDur = 0 // negativa no tiene sentido: indefinida
 	}
 
 	g.mu.Lock()
@@ -378,17 +384,19 @@ func (g *Generator) Snapshot() Stats {
 	return r.stats()
 }
 
-// launchLoop es el cerebro de la carga: cada "tick" (según cps) lanza una llamada
-// nueva si aún no se alcanzó el objetivo de N concurrentes. Cuenta también las
-// llamadas en vuelo (pending) para no disparar una ráfaga durante la subida.
+// launchLoop es el cerebro de la carga: a cada vuelta acredita las "fichas" de
+// lanzamiento devengadas por el tiempo real transcurrido (token bucket, ver
+// bucket.go) y lanza una llamada por ficha mientras no se alcance el objetivo
+// de N concurrentes (contando las en vuelo, para no disparar ráfagas en la
+// subida). El tick es FIJO (20 ms): la cps la marca el bucket, no el ticker,
+// así que ni hay techo de ~1000 cps ni se pierden llamadas si el loop se
+// retrasa (el tiempo transcurrido las devenga igual).
 func (g *Generator) launchLoop(ctx context.Context, r *run) {
 	defer r.wg.Done()
 
-	interval := time.Duration(float64(time.Second) / r.spec.CPS)
-	if interval < time.Millisecond {
-		interval = time.Millisecond
-	}
-	ticker := time.NewTicker(interval)
+	b := newBucket(r.spec.CPS)
+	last := time.Now()
+	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
@@ -396,6 +404,9 @@ func (g *Generator) launchLoop(ctx context.Context, r *run) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			now := time.Now()
+			b.suma(now.Sub(last))
+			last = now
 			// Tope total alcanzado: no se lanzan nuevas y, cuando termine la última
 			// viva, la prueba acaba SOLA (foto final en Snapshot, hueco libre).
 			if r.spec.MaxCalls > 0 && r.launched.Load() >= r.spec.MaxCalls {
@@ -405,11 +416,15 @@ func (g *Generator) launchLoop(ctx context.Context, r *run) {
 				}
 				continue
 			}
-			// Reponemos hasta alcanzar N establecidas (contando las en vuelo).
+			// Reponemos hasta alcanzar N establecidas (contando las en vuelo), una
+			// llamada por ficha. toma() va la ÚLTIMA en la condición: si no toca
+			// lanzar, la ficha no se gasta (queda acumulada, con su techo de ráfaga).
 			// launched/pending se cuentan AQUÍ y no en el worker: si se contaran allí,
-			// varios ticks podrían colarse antes de que el worker arranque y se
+			// varias vueltas podrían colarse antes de que el worker arranque y se
 			// sobrepasaría MaxCalls (y el autofin de arriba vería un 0 falso).
-			if r.active.Load()+r.pending.Load() < int64(r.spec.Concurrent) {
+			for (r.spec.MaxCalls == 0 || r.launched.Load() < r.spec.MaxCalls) &&
+				r.active.Load()+r.pending.Load() < int64(r.spec.Concurrent) &&
+				b.toma() {
 				r.launched.Add(1)
 				r.pending.Add(1)
 				r.wg.Add(1)
@@ -510,11 +525,24 @@ func (g *Generator) worker(ctx context.Context, r *run) {
 		r.sessMu.Unlock()
 	}
 
-	// Sostener la llamada hasta el STOP o hasta que el otro extremo la termine.
+	// Sostener la llamada hasta el STOP, hasta que venza su duración (churn) o
+	// hasta que el otro extremo la termine.
+	var caduca <-chan time.Time
+	if r.spec.CallDur > 0 {
+		tmr := time.NewTimer(r.spec.CallDur)
+		defer tmr.Stop()
+		caduca = tmr.C // canal nil si no hay duración: ese case nunca dispara
+	}
 	select {
 	case <-ctx.Done():
 		// STOP / parada del agente: colgamos nosotros con BYE. Contexto propio para
 		// que el BYE salga aunque el de la carga ya esté cancelado.
+		byeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = call.Hangup(byeCtx)
+		cancel()
+	case <-caduca:
+		// Duración cumplida: BYE nuestro y hueco libre — el loop repondrá con una
+		// llamada NUEVA (churn continuo: cada una con su INVITE, su PDD y su media).
 		byeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = call.Hangup(byeCtx)
 		cancel()

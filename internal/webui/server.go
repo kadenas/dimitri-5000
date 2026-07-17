@@ -592,6 +592,7 @@ type loadReq struct {
 	Concurrent int     `json:"concurrent"` // N llamadas simultáneas a sostener
 	CPS        float64 `json:"cps"`        // ritmo de lanzamiento/reposición (llamadas/seg)
 	MaxCalls   int64   `json:"max_calls"`  // tope total de INVITEs (0 = sin tope)
+	CallSecs   float64 `json:"call_secs"`  // duración de cada llamada en segundos (0 = hasta STOP): churn continuo
 	WithMedia  bool    `json:"with_media"` // enviar RTP en cada llamada
 	Scenario   string  `json:"scenario"`   // nombre del escenario UAC por llamada (vacío = INVITE básico)
 
@@ -665,6 +666,7 @@ func (s *Server) handleLoadStart(w http.ResponseWriter, r *http.Request) {
 		Concurrent: req.Concurrent,
 		CPS:        req.CPS,
 		MaxCalls:   req.MaxCalls,
+		CallDur:    time.Duration(req.CallSecs * float64(time.Second)),
 		WithMedia:  req.WithMedia,
 	}
 
