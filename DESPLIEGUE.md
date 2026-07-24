@@ -52,7 +52,7 @@ $env:GOOS="linux"; $env:GOARCH="amd64"; go build -ldflags "-s -w" -o dist/dimitr
 2. (Opcional) Copiar y ajustar un `config.json` junto al binario.
 3. Ejecutar desde consola:
    ```
-   dimitri-5000.exe --config config.json --web 127.0.0.1:8080
+   dimitri-5000.exe --mode web --sip-port 5070 --web 127.0.0.1:8080
    ```
 4. Abrir `http://127.0.0.1:8080`.
 
@@ -65,19 +65,18 @@ $env:GOOS="linux"; $env:GOARCH="amd64"; go build -ldflags "-s -w" -o dist/dimitr
 2. Dar permiso de ejecución: `chmod +x dimitri-5000`.
 3. Ejecutar:
    ```
-   ./dimitri-5000 --config config.json --web 127.0.0.1:8080
+   ./dimitri-5000 --mode web --sip-port 5070 --web 127.0.0.1:8080
    ```
 4. Abrir `http://127.0.0.1:8080`.
 
 ## Configuración necesaria
 
+- `--mode`: modo de ejecución (`web` para la interfaz completa; también `monitor`,
+  `uac`, `uas`, `scenario`). Por defecto `monitor`.
 - `--config` (opcional): ruta a un fichero JSON. Si se omite, se usan valores por defecto.
 - `--web`: dirección de la interfaz web (por defecto `127.0.0.1:8080`, solo local).
-- `--bind-ip`: IP local de origen del tráfico SIP (Via/Contact). Vacío = la del config.
+- `--sip-port`: puerto SIP local (por defecto `5060`; `5070` evita chocar con softphones).
+- `--bind-ip`: IP local de origen del tráfico SIP (Via/Contact). Vacío = autodetectar.
 
-Para exponer SIP hacia la red, la `bind_ip` debe ser una IP real de la máquina, no
+Para exponer SIP hacia la red, la `bind-ip` debe ser una IP real de la máquina, no
 `127.0.0.1`.
-
-## App Android
-
-No aplica: dimitri-5000 es una herramienta de escritorio/servidor, no una app Android.

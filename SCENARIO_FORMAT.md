@@ -5,8 +5,10 @@ Los escenarios describen un flujo de prueba SIP como una **secuencia de pasos**
 es la referencia del lenguaje; el cargador y la validación viven en
 `internal/scenario`.
 
-> Estado: definido y con cargador + validación implementados. El **runner**
-> (ejecución contra el motor SIP) es el siguiente paso de la Fase 2.
+> Estado: implementado de extremo a extremo. Cargador, validación y **runner**
+> (ejecución contra el motor SIP, lados UAC y UAS) funcionando. Los escenarios se
+> ejecutan desde la web, por CLI (`--mode scenario`) o como plantilla de cada llamada
+> en una prueba de carga.
 
 ## Estructura general
 
@@ -29,7 +31,7 @@ steps:                         # obligatorio: al menos un paso
 bodies:                        # opcional: cuerpos reutilizables (SDP)
   <nombre>:
     type: sdp
-    media: g711                # alias de media (audio real en Fase 5)
+    media: g711                # alias de media (audio real G.711 por RTP)
     content: <texto>           # alternativa: cuerpo literal
 
 inject:                        # opcional: datos por llamada desde CSV

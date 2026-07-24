@@ -22,14 +22,20 @@
 
 dimitri-5000 implementa **ambos roles**.
 
-## Modos de operación (visión)
+## Modos de operación
 
-1. **Modo manual (llamada a llamada):** lanzar o recibir una única llamada y seguir su
-   flujo paso a paso. Orientado a depuración.
-2. **Modo escenarios (estilo SIPp):** flujos definidos en fichero propio (YAML/JSON) con
-   una máquina de estados (enviar/esperar/pausar/validar).
+La interfaz principal es la **web** (`--mode web`): desde ella se crean agentes, se
+lanzan y controlan llamadas, se ejecutan escenarios, se hacen pruebas de carga y se ven
+las trazas. Los modos de CLI son atajos para automatizar o depurar sin navegador:
+
+1. **Modo manual (llamada a llamada):** lanzar (`--mode uac`) o recibir (`--mode uas`)
+   una única llamada y seguir su flujo paso a paso. Orientado a depuración.
+2. **Modo escenarios (estilo SIPp):** flujos definidos en fichero propio (YAML) con una
+   máquina de estados (enviar/esperar/pausar/validar). Por CLI, `--mode scenario`.
 3. **Modo carga:** generar tráfico a una tasa configurable (cps) y/o sostener N llamadas
-   activas simultáneas, con estadísticas en tiempo real.
+   activas simultáneas, con estadísticas en tiempo real. Se opera desde la web.
+4. **Modo monitor:** faro de OPTIONS que vigila el estado de las troncales
+   (`--mode monitor`).
 
 ## Arquitectura
 
@@ -50,16 +56,20 @@ carga, web) no conoce la librería SIP. Así, un cambio de librería o una ampli
 contenido y no se desparrama por el proyecto.
 
 ```
-main.go                 Arranque: lee config, cablea módulos, parada limpia.
+main.go                 Arranque: lee config/flags, cablea módulos, parada limpia.
 internal/
-  config/   Configuración (JSON; YAML para escenarios más adelante).
+  config/   Configuración (JSON) y persistencia del modo monitor.
   sipcore/  ÚNICA capa que habla con sipgo: UAC, UAS, transacciones, diálogos.
-  scenario/ (futuro) Parser YAML/JSON + máquina de estados de un flujo.
-  engine/   (futuro) Generador de carga: control de cps y concurrencia.
-  media/    (futuro) RTP + codecs (G.711) + gestión de audio.
-  stats/    (futuro) Métricas en tiempo real.
-  monitor/  Faro de OPTIONS (v0; pasará a ser un escenario más).
-  webui/    Interfaz web + API (estado y, en el futuro, control y stream de stats).
+  agent/    Gestor de agentes: instancias SIP independientes (IP, puerto, conducta).
+  control/  Orquestación de una llamada web (lanzar, colgar, HOLD/RESUME, REFER).
+  scenario/ Parser YAML + validación de un flujo (máquina de estados).
+  runner/   Ejecuta un escenario contra el motor SIP (lados UAC y UAS).
+  load/     Generador de carga: token-bucket de cps, concurrencia y estadísticas.
+  media/    RTP + codec G.711 + audio (tono o WAV propio) + SDP.
+  trace/    Registro de trazas SIP por llamada (para el visor tipo SBC).
+  monitor/  Faro de OPTIONS que vigila troncales.
+  netutil/  Utilidades de red (autodetección de IP, etc.).
+  webui/    Interfaz web + API (estado, control y stream de estadísticas).
 ```
 
 ## Stack tecnológico
@@ -70,12 +80,14 @@ internal/
 - **Escenarios:** `gopkg.in/yaml.v3` (ya disponible vía dependencias de sipgo).
 - **Web:** servidor HTTP de la librería estándar + ficheros embebidos (go:embed).
 
-### Decisión de audio (MP3 → RTP)
+### Decisión de audio (WAV → G.711 → RTP)
 
-El RTP de VoIP no transporta MP3, sino audio en bruto codificado (típicamente G.711
-µ-law/A-law a 8 kHz mono). Decisión adoptada: **convertir el audio una sola vez al subirlo**
-(p. ej. con ffmpeg) a G.711, en lugar de transcodificar en cada llamada. Se concreta en la
-Fase 5 (media).
+El RTP de VoIP no transporta ficheros comprimidos, sino audio en bruto codificado
+(típicamente G.711 µ-law/A-law a 8 kHz mono). Decisión adoptada: partir de **WAV (PCM)**
+—lo que produce sin esfuerzo Audacity o ffmpeg— y **convertirlo una sola vez al cargarlo**
+a G.711, en lugar de transcodificar en cada llamada. La decodificación de WAV (mezcla a
+mono y resampleo a 8 kHz) es propia, sin dependencias. Se puede enviar ese WAV o un tono
+generado. El soporte de MP3 quedaría para más adelante (con una librería en Go puro).
 
 ## Estructura de carpetas
 
@@ -84,10 +96,14 @@ responsabilidad y comentarios en español explicando el porqué.
 
 ## Ejecución local
 
-Requiere Go 1.23+ instalado. Selector de modo con `--mode`:
+Requiere Go 1.23+ instalado. La vía habitual es el script `run-web.sh` (Linux/macOS) o
+`run-web.ps1` (Windows), que arranca el modo web. Con `--mode` a mano:
 
 ```
-# Monitor (faro de OPTIONS + web)
+# Web (interfaz principal: agentes, llamadas, escenarios, carga y trazas)
+go run . --mode web --bind-ip "" --sip-port 5070 --web 127.0.0.1:8080
+
+# Monitor (faro de OPTIONS + web de estado)
 go run . --mode monitor --web 127.0.0.1:8080
 
 # Recibir llamadas (UAS)
@@ -95,6 +111,9 @@ go run . --mode uas --bind-ip 127.0.0.1 --sip-port 5060
 
 # Lanzar una llamada (UAC)
 go run . --mode uac --bind-ip 127.0.0.1 --sip-port 5062 --to sip:127.0.0.1:5060 --hold 5s
+
+# Ejecutar un escenario YAML
+go run . --mode scenario --file examples/scenarios/uac-basico.yaml --to sip:127.0.0.1:5060
 ```
 
 La IP de señalización (`--bind-ip`) se autodetecta de la tarjeta de red si se deja
@@ -106,18 +125,30 @@ Ver `DESPLIEGUE.md`.
 
 ## Estado actual
 
-- **v0 (base):** núcleo SIP que envía OPTIONS (UAC), faro de monitorización con una
-  goroutine por troncal, web local que muestra estado por polling. Compila y arranca.
-- **Fase 1 (completa):** núcleo de señalización UAC/UAS para llamadas INVITE completas,
-  con modo manual CLI (`--mode uas|uac`), transporte UDP/TCP y autodetección de la IP de
-  la tarjeta de red. Verificado con UAC↔UAS en el mismo PC.
-- **En curso / siguiente:** Fase 2 — motor de escenarios.
+Todas las fases del plan están implementadas y en uso. La herramienta funciona de
+extremo a extremo desde la web:
 
-## Plan por fases
+- **Señalización UAC/UAS** de INVITE completo (INVITE→180→200→ACK→BYE), transporte
+  UDP/TCP y autodetección de la IP de la tarjeta de red.
+- **Media RTP con G.711** (µ-law/A-law), enviando un tono o un WAV propio, con métricas
+  en vivo (paquetes, jitter, pérdida).
+- **Control de la llamada en curso:** colgar, HOLD/RESUME (re-INVITE real) y REFER.
+- **Escenarios en YAML** de ambos lados (UAC y UAS), ejecutables desde la web, por CLI o
+  como plantilla de cada llamada en una prueba de carga.
+- **Pruebas de carga:** token-bucket de cps sin techo, N llamadas concurrentes, números
+  A/B fijos, duración de llamada opcional y desglose de fallos por causa (PDD, canceladas).
+- **Monitor de troncales** por OPTIONS y **visor de trazas tipo SBC** con diagrama de
+  escalera por llamada.
+- **Multi-agente:** varias instancias SIP independientes en la misma máquina.
 
-1. **Fase 1 — Señalización:** UAC y UAS de INVITE completo (INVITE→180→200→ACK→BYE), sin media.
-2. **Fase 2 — Escenarios:** motor de escenarios en YAML/JSON con máquina de estados.
-3. **Fase 3 — Carga:** generador de cps, llamadas concurrentes, estadísticas en vivo.
-4. **Fase 4 — Web de control:** lanzar/configurar/parar pruebas y métricas en tiempo real.
-5. **Fase 5 — Media RTP:** subida y conversión de audio, envío/recepción RTP, DTMF.
-6. **Fase 6 — Pulido:** TLS/TCP, REGISTER, export CSV, alto rendimiento.
+Nota: el estado del modo web (agentes, trunks) vive en memoria mientras la aplicación
+corre; solo el modo monitor persiste su configuración a disco.
+
+## Plan por fases (todas completadas)
+
+1. **Fase 1 — Señalización:** UAC y UAS de INVITE completo (INVITE→180→200→ACK→BYE), sin media. ✔
+2. **Fase 2 — Escenarios:** motor de escenarios en YAML con máquina de estados. ✔
+3. **Fase 3 — Carga:** generador de cps, llamadas concurrentes, estadísticas en vivo. ✔
+4. **Fase 4 — Web de control:** lanzar/configurar/parar pruebas y métricas en tiempo real. ✔
+5. **Fase 5 — Media RTP:** subida y conversión de audio (WAV→G.711), envío/recepción RTP. ✔
+6. **Fase 6 — Pulido:** TCP, export CSV, alto rendimiento (2000 cps reales verificados). ✔

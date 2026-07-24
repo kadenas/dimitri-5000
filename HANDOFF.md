@@ -1,7 +1,35 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-07-17 (sesión 19: carga — duración de llamada (churn) y token-bucket; plan de carga COMPLETO)
+Fecha: 2026-07-24 (sesión 20: sincronización de la documentación de cara a la presentación)
+
+## Sesión 20 — Documentación: sincronizar FICHA_TECNICA con el estado real (limpieza pre-presentación)
+- OBJETIVO: dejar la documentación "limpita" para presentar el proyecto. El README
+  (jul 16) estaba al día, pero FICHA_TECNICA.md (jun 25) se quedó en "Fase 1 completa /
+  en curso Fase 2" y describía casi todo como "(futuro)". Sincronizar y barrer errores
+  en el resto de ficheros .md.
+- CAMBIOS (solo ficheros .md, ningún .go tocado):
+  - FICHA_TECNICA.md: árbol de arquitectura reescrito contra `internal/` real —
+    eliminados paquetes inexistentes (`engine/`, `stats/`), añadidos los 12 reales
+    (agent, control, load, runner, trace, netutil…) y quitados los marcadores
+    "(futuro)". "Estado actual" y "Plan por fases" reflejan que TODO está implementado
+    (fases 1-6 con ✔). "Decisión de audio (MP3→RTP)" corregida a WAV→G.711 (el código
+    real: media/wav.go; MP3 sigue siendo futuro). Modos de operación y Ejecución local
+    ahora incluyen el modo `web` como interfaz principal.
+  - SCENARIO_FORMAT.md: quitadas las dos notas que decían que el runner "es el siguiente
+    paso de la Fase 2" (ya implementado, UAC y UAS); nota de `media: g711` desligada de
+    "Fase 5".
+  - DESPLIEGUE.md: los ejemplos de ejecución omitían `--mode web`, así que arrancaban en
+    modo `monitor` (el default) en lugar de la web — corregidos a `--mode web --sip-port
+    5070`. Documentados los flags `--mode`/`--sip-port` (verificados contra main.go) y
+    eliminada la sección "App Android" (resto de plantilla).
+- VERIFICADO: `go build ./...` y `go vet ./...` en verde (cambios solo de documentación).
+  Flags contrastados con main.go (mode default=monitor, sip-port default=0→5060,
+  bind-ip vacío=autodetectar). Barrido de "futuro/en curso/próximo paso" sin residuos.
+- PRÓXIMO: sin cambios sobre los candidatos de la sesión 19 (CANCEL al colgar en ring;
+  ordenar/filtrar/exportar trazas; PAI/Diversion en traza; HOLD desde UAS; runner
+  reason/save/match/CSV; partir webui/server.go; tests de control/webui; data race de
+  sipgo v1.4.0 con -race).
 
 ## Sesión 19 — Carga: duración de llamada (churn) + token-bucket para cps altas
 - OBJETIVO: cerrar el plan de la sesión 16 con los dos puntos restantes: 4) duración
