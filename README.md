@@ -150,3 +150,30 @@ reproducir incidencias sin pelearse con XML.
 - `SCENARIO_FORMAT.md` — referencia del lenguaje de escenarios.
 - `DESPLIEGUE.md` — cómo compilar y desplegar en Windows y Ubuntu.
 - `HANDOFF.md` — diario de desarrollo: qué se ha hecho y qué queda.
+
+## Licencia
+
+Este proyecto se distribuye bajo la licencia **MIT** — Copyright (c) 2026
+Jerónimo Mosquera. El texto completo está en [`LICENSE`](LICENSE).
+
+### Dependencias de terceros
+
+El motor SIP se apoya en **[sipgo](https://github.com/emiago/sipgo)** de Emir
+Aganovic, distribuido bajo licencia **BSD 2-Clause**. Gracias a ese proyecto por
+resolver la parte más difícil de la RFC 3261 (transacciones, retransmisiones,
+diálogos y digest auth).
+
+El resto de dependencias son igualmente permisivas y compatibles con MIT:
+
+| Dependencia | Licencia |
+|---|---|
+| `github.com/emiago/sipgo` | BSD 2-Clause |
+| `gopkg.in/yaml.v3` | MIT / Apache-2.0 |
+| `github.com/gobwas/ws`, `gobwas/pool`, `gobwas/httphead` | MIT |
+| `github.com/icholy/digest` | MIT |
+| `github.com/kr/text` | MIT |
+| `github.com/google/uuid` | BSD 3-Clause |
+| `golang.org/x/sync`, `golang.org/x/sys` | BSD 3-Clause |
+
+Los textos completos de licencia de cada dependencia están en
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
