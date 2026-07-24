@@ -1,48 +1,66 @@
 # dimitri-5000
 
-Herramienta de pruebas SIP/VoIP con interfaz web. Lanza y recibe llamadas,
-ejecuta escenarios reproducibles, genera carga y te enseña las trazas SIP en un
-diagrama de escalera — todo desde el navegador, con un único binario.
+***English** · [Español](README.es.md)*
 
-Nace como alternativa moderna a SIPp: la misma idea (probar centralitas,
-troncales y SBCs con tráfico controlado), pero con escenarios en YAML legible
-en lugar de XML, y una web de control en tiempo real en lugar de una pantalla
-de ncurses.
+**Test SIP/VoIP PBXs, trunks and SBCs from your browser.** Place and receive
+calls with real audio, generate load of thousands of calls per second, and watch
+the SIP trace as a live ladder diagram. A single binary, nothing to install.
 
-## ¿Qué puedes hacer con ella?
+[![Go](https://img.shields.io/badge/Go-1.23%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+![Platforms](https://img.shields.io/badge/Windows%20%7C%20Linux-single%20binary-blue)
+![SIP](https://img.shields.io/badge/SIP-RFC%203261-orange)
 
-- **Lanzar llamadas** (UAC) y **recibirlas** (UAS), con identidades SIP
-  realistas: From/To con número y dominio, P-Asserted-Identity, cabeceras
-  arbitrarias… lo necesario para atravesar un SBC como lo haría una llamada real.
-- **Audio de verdad**: media RTP con G.711, con métricas en vivo (paquetes,
-  jitter, pérdida). Puedes enviar un tono o tu propio fichero WAV.
-- **Controlar la llamada en curso**: colgar, poner en espera y reanudar
-  (HOLD/RESUME con re-INVITE real) o desviarla (REFER).
-- **Escenarios reproducibles** en YAML, estilo SIPp pero legibles: tanto del
-  lado que llama (UAC) como del que contesta (UAS), con temporizaciones,
-  respuestas opcionales y variables. Hay ejemplos en `examples/scenarios/`.
-- **Pruebas de carga**: N llamadas a una tasa configurable (cps), cada una
-  ejecutando un escenario completo, con estadísticas en vivo. Puedes fijar el
-  número A (llamante) y el número B (llamado) desde el panel: todas las
-  llamadas de la prueba salen con esa numeración (en el From y en el
-  To/Request-URI), lista para enrutarla por número en tu SBC o PBX; si la
-  carga usa un escenario, esos números pisan sus variables `{caller}` y
-  `{callee}`.
-- **Monitorizar troncales** con OPTIONS: estado, código de respuesta y RTT de
-  cada trunk, con umbral de fallos configurable.
-- **Ver qué pasa por el cable**: visor de trazas tipo SBC con todas las
-  llamadas (estado, duración, origen/destino) y, al pulsar una, su diagrama de
-  escalera mensaje a mensaje; cada mensaje se puede abrir en crudo.
-- **Varios agentes a la vez**: cada agente es una instancia SIP independiente
-  (su IP, su puerto, su comportamiento al contestar), así puedes simular los
-  dos extremos de una llamada en la misma máquina.
+A modern alternative to **SIPp**: the same power to test VoIP with controlled
+traffic, but with **readable YAML** scenarios instead of XML and a **real-time
+web UI** instead of an ncurses screen.
 
-Todo esto vive en la interfaz web, organizada en 7 paneles: AGENTS, PLACE
-CALL, CALLS, TRUNKS/OPTIONS, SIP TRACE, SCENARIOS y LOAD TEST.
+<!-- Recommended: a screenshot or GIF of the UI is what convinces a visitor
+     arriving from LinkedIn in the first few seconds. Save it under docs/ and uncomment:
+![dimitri-5000 UI](docs/screenshot.png)
+-->
 
-## Arranque rápido
+#### At a glance
 
-Necesitas [Go 1.23+](https://go.dev/dl/). Desde la carpeta del proyecto:
+- 📞 **Real calls** UAC/UAS with RTP audio (G.711), HOLD/RESUME and REFER.
+- 🧪 **YAML scenarios**, reproducible, for both the calling and the answering side.
+- 🚀 **Load testing** at thousands of cps with live stats (verified at 2000 cps).
+- 🔍 **SBC-style trace**: every call, its ladder diagram and the raw message.
+- 🖥️ **Multi-agent** on a single machine, all from the browser.
+
+## What can you do with it?
+
+- **Place calls** (UAC) and **receive them** (UAS) with realistic SIP
+  identities: From/To with number and domain, P-Asserted-Identity, arbitrary
+  headers… whatever it takes to traverse an SBC like a real call would.
+- **Real audio**: RTP media with G.711, with live metrics (packets, jitter,
+  loss). You can send a tone or your own WAV file.
+- **Control the ongoing call**: hang up, put on hold and resume (HOLD/RESUME
+  with a real re-INVITE) or transfer it (REFER).
+- **Reproducible scenarios** in YAML, SIPp-style but readable: for both the
+  calling side (UAC) and the answering side (UAS), with timings, optional
+  responses and variables. Examples live in `examples/scenarios/`.
+- **Load testing**: N calls at a configurable rate (cps), each running a full
+  scenario, with live statistics. You can pin the A number (caller) and the B
+  number (callee) from the panel: every call in the test goes out with that
+  numbering (in the From and in the To/Request-URI), ready to route by number in
+  your SBC or PBX; if the load uses a scenario, those numbers override its
+  `{caller}` and `{callee}` variables.
+- **Monitor trunks** with OPTIONS: status, response code and RTT of each trunk,
+  with a configurable failure threshold.
+- **See what goes over the wire**: an SBC-style trace viewer with every call
+  (status, duration, source/destination) and, on click, its ladder diagram
+  message by message; each message can be opened raw.
+- **Several agents at once**: each agent is an independent SIP instance (its own
+  IP, port and answering behavior), so you can simulate both ends of a call on
+  the same machine.
+
+Everything lives in the web UI, organized into 7 panels: AGENTS, PLACE CALL,
+CALLS, TRUNKS/OPTIONS, SIP TRACE, SCENARIOS and LOAD TEST.
+
+## Quick start
+
+You need [Go 1.23+](https://go.dev/dl/). From the project folder:
 
 ```bash
 # Linux / macOS
@@ -54,55 +72,55 @@ Necesitas [Go 1.23+](https://go.dev/dl/). Desde la carpeta del proyecto:
 .\run-web.ps1
 ```
 
-Abre `http://127.0.0.1:8080` y ya estás dentro. El script arranca en loopback
-(SIP en 127.0.0.1:5070), que es perfecto para la primera toma de contacto:
-crea un segundo agente en el panel AGENTS (por ejemplo en el puerto 5071),
-lanza una llamada entre los dos desde PLACE CALL y mira la traza en SIP TRACE.
+Open `http://127.0.0.1:8080` and you're in. The script starts on loopback (SIP
+on 127.0.0.1:5070), which is perfect for a first taste: create a second agent in
+the AGENTS panel (say on port 5071), place a call between the two from PLACE
+CALL, and watch the trace in SIP TRACE.
 
-Para hablar con equipos reales (un Asterisk, un SBC…), edita las variables al
-principio de `run-web.sh` / `run-web.ps1`: deja `BIND_IP` vacío para que
-autodetecte la IP de tu tarjeta de red, y pon `WEB_ADDR` en `0.0.0.0:8080` si
-quieres abrir la web desde otro equipo de la LAN.
+To talk to real equipment (an Asterisk, an SBC…), edit the variables at the top
+of `run-web.sh` / `run-web.ps1`: leave `BIND_IP` empty so it autodetects your
+network card's IP, and set `WEB_ADDR` to `0.0.0.0:8080` if you want to open the
+UI from another machine on the LAN.
 
-Si prefieres el comando directo:
+If you prefer the direct command:
 
 ```bash
 go run . --mode web --bind-ip "" --sip-port 5070 --web 127.0.0.1:8080
 ```
 
-## Modos de ejecución
+## Execution modes
 
-El modo `web` es el principal y el que querrás casi siempre. Los demás son
-útiles para automatizar o para depurar sin navegador:
+The `web` mode is the main one and what you'll want almost always. The others
+are handy for automation or for debugging without a browser:
 
-| Modo | Qué hace | Ejemplo |
+| Mode | What it does | Example |
 |---|---|---|
-| `web` | Estación de trabajo completa: agentes, llamadas, escenarios, carga y trazas desde el navegador | `go run . --mode web` |
-| `uac` | Lanza UNA llamada, la mantiene un tiempo y cuelga | `go run . --mode uac --to sip:192.168.1.10:5060 --hold 10s` |
-| `uas` | Se queda escuchando y contesta las llamadas entrantes | `go run . --mode uas --sip-port 5060 --answer-code 200` |
-| `scenario` | Ejecuta un escenario YAML por CLI | `go run . --mode scenario --file examples/scenarios/uac-basico.yaml --to sip:10.0.0.5:5060` |
-| `monitor` | Solo el faro de troncales (OPTIONS) + web de estado | `go run . --mode monitor --config config.json` |
+| `web` | Full workstation: agents, calls, scenarios, load and traces from the browser | `go run . --mode web` |
+| `uac` | Places ONE call, holds it for a while and hangs up | `go run . --mode uac --to sip:192.0.2.10:5060 --hold 10s` |
+| `uas` | Listens and answers incoming calls | `go run . --mode uas --sip-port 5060 --answer-code 200` |
+| `scenario` | Runs a YAML scenario from the CLI | `go run . --mode scenario --file examples/scenarios/uac-basico.yaml --to sip:192.0.2.30:5060` |
+| `monitor` | Only the trunk beacon (OPTIONS) + status web | `go run . --mode monitor --config config.json` |
 
-`go run . --help` lista todos los flags (transporte UDP/TCP, dominio del From,
-código de respuesta del UAS, tiempo de ringing…).
+`go run . --help` lists every flag (UDP/TCP transport, From domain, UAS response
+code, ringing time…).
 
-## Configuración
+## Configuration
 
-Para el modo monitor (o para fijar IP/puerto sin flags) puedes usar un JSON:
+For monitor mode (or to pin IP/port without flags) you can use a JSON file:
 
 ```bash
-cp config.example.json config.json   # edítalo con tus IPs y troncales
+cp config.example.json config.json   # edit it with your IPs and trunks
 go run . --config config.json
 ```
 
-`config.json` está fuera del repositorio a propósito: suele contener IPs
-internas. En modo `web`, agentes y trunks se crean desde la propia interfaz
-(el estado vive en memoria mientras la aplicación corre).
+`config.json` is kept out of the repository on purpose: it usually holds
+internal IPs. In `web` mode, agents and trunks are created from the UI itself
+(state lives in memory while the app runs).
 
-## Escenarios
+## Scenarios
 
-Un escenario describe un flujo SIP como una secuencia de pasos. Este, por
-ejemplo, es una llamada básica del lado que llama:
+A scenario describes a SIP flow as a sequence of steps. This one, for example,
+is a basic call from the calling side:
 
 ```yaml
 name: uac-llamada-basica
@@ -121,51 +139,52 @@ steps:
   - recv: "200"
 ```
 
-También puedes escribir el guion del lado que contesta (`role: uas`): cuánto
-tarda en dar el 180, con qué código responde, cuándo cuelga. La referencia
-completa del formato está en `SCENARIO_FORMAT.md`, y en `examples/scenarios/`
-hay escenarios de ambos lados listos para usar. Los escenarios se ejecutan
-desde la web (panel SCENARIOS), por CLI (`--mode scenario`) o como plantilla
-de cada llamada en una prueba de carga.
+You can also script the answering side (`role: uas`): how long it takes to send
+the 180, which code it answers with, when it hangs up. The full format reference
+is in `SCENARIO_FORMAT.md`, and `examples/scenarios/` has ready-to-use scenarios
+for both sides. Scenarios run from the web (SCENARIOS panel), from the CLI
+(`--mode scenario`), or as the template for each call in a load test.
 
-## Compilar un binario
+## Build a binary
 
 ```bash
 go build -ldflags "-s -w" -o dist/dimitri-5000 .
 ```
 
-Sale un único ejecutable autocontenido (la web va embebida): se copia a la
-máquina de destino y listo, sin instalar nada más. En `DESPLIEGUE.md` está el
-detalle, incluida la compilación cruzada Windows ⇄ Linux.
+You get a single self-contained executable (the web UI is embedded): copy it to
+the target machine and you're done, nothing else to install. `DESPLIEGUE.md` has
+the details, including cross-compilation Windows ⇄ Linux.
 
-## ¿Para quién es?
+## Who is it for?
 
-Técnicos de VoIP, QA y operadores que necesitan probar centralitas, troncales
-y SBCs: validar flujos de llamada, medir comportamiento bajo carga y
-reproducir incidencias sin pelearse con XML.
+VoIP engineers, QA and carriers who need to test PBXs, trunks and SBCs: validate
+call flows, measure behavior under load and reproduce incidents without
+wrestling with XML.
 
-## Documentación
+## Documentation
 
-- `FICHA_TECNICA.md` — arquitectura, stack y plan por fases.
-- `SCENARIO_FORMAT.md` — referencia del lenguaje de escenarios.
-- `DESPLIEGUE.md` — cómo compilar y desplegar en Windows y Ubuntu.
-- `HANDOFF.md` — diario de desarrollo: qué se ha hecho y qué queda.
+Project docs are written in Spanish:
 
-## Licencia
+- `FICHA_TECNICA.md` — architecture, stack and phased plan.
+- `SCENARIO_FORMAT.md` — scenario language reference.
+- `DESPLIEGUE.md` — how to build and deploy on Windows and Ubuntu.
+- `HANDOFF.md` — development log: what's done and what's left.
 
-Este proyecto se distribuye bajo la licencia **MIT** — Copyright (c) 2026
-Jerónimo Mosquera. El texto completo está en [`LICENSE`](LICENSE).
+## License
 
-### Dependencias de terceros
+This project is distributed under the **MIT** license — Copyright (c) 2026
+Jerónimo Mosquera. Full text in [`LICENSE`](LICENSE).
 
-El motor SIP se apoya en **[sipgo](https://github.com/emiago/sipgo)** de Emir
-Aganovic, distribuido bajo licencia **BSD 2-Clause**. Gracias a ese proyecto por
-resolver la parte más difícil de la RFC 3261 (transacciones, retransmisiones,
-diálogos y digest auth).
+### Third-party dependencies
 
-El resto de dependencias son igualmente permisivas y compatibles con MIT:
+The SIP engine builds on **[sipgo](https://github.com/emiago/sipgo)** by Emir
+Aganovic, distributed under the **BSD 2-Clause** license. Thanks to that project
+for solving the hardest part of RFC 3261 (transactions, retransmissions, dialogs
+and digest auth).
 
-| Dependencia | Licencia |
+The remaining dependencies are equally permissive and MIT-compatible:
+
+| Dependency | License |
 |---|---|
 | `github.com/emiago/sipgo` | BSD 2-Clause |
 | `gopkg.in/yaml.v3` | MIT / Apache-2.0 |
@@ -175,5 +194,5 @@ El resto de dependencias son igualmente permisivas y compatibles con MIT:
 | `github.com/google/uuid` | BSD 3-Clause |
 | `golang.org/x/sync`, `golang.org/x/sys` | BSD 3-Clause |
 
-Los textos completos de licencia de cada dependencia están en
+Full license texts for each dependency are in
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

@@ -7,6 +7,9 @@
 # Configuración local real (NO subir: puede llevar IPs internas)
 config.json
 
+# Informe de auditoría interno (NO subir: cita IPs de laboratorio y datos privados)
+AUDITORIA.md
+
 # Sistema operativo / editor
 .DS_Store
 .idea/
