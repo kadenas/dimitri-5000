@@ -1,7 +1,48 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-07-24 (sesión 20: sincronización de la documentación de cara a la presentación)
+Fecha: 2026-07-24 (sesión 21: preparación open source — licencia, README bilingüe, auditoría de fugas)
+
+## Sesión 21 — Publicación open source: licencia, README de escaparate y auditoría
+- OBJETIVO: dejar el repo listo para publicar en GitHub (reputación/contactos vía
+  LinkedIn), sin fugas de información y con un README que convenza en 15 s.
+- CAMBIOS (todo commiteado tras la sesión 20):
+  - `89c1d14` LICENSE MIT (Copyright (c) 2026 Jerónimo Mosquera) +
+    THIRD_PARTY_NOTICES.md con los textos de licencia de las 10 dependencias +
+    sección Licencia en el README. Auditoría de licencias hecha leyendo el módulo
+    cache: sipgo es **BSD 2-Clause** (no MIT), yaml.v3 MIT/Apache-2.0, resto MIT o
+    BSD-3. Todas permisivas y compatibles con distribuir bajo MIT; ninguna copyleft.
+  - `5d94f80` README bilingüe: `README.md` pasa a INGLÉS (escaparate principal,
+    alcance internacional) con selector de idioma; `README.es.md` conserva el español.
+    Cabecera nueva orientada al visitante de 15 s: titular autoexplicativo, badges
+    (Go/MIT/plataformas/SIP RFC 3261), pitch vs SIPp, bloque "de un vistazo" y hueco
+    de captura preparado (`docs/screenshot.png`, comentado). IPs de ejemplo de las
+    tablas normalizadas a RFC 5737 (`192.0.2.x`). `.gitignore` ahora excluye AUDITORIA.md.
+- AUDITORÍA DE FUGAS (informe en `AUDITORIA.md`, IGNORADO por git a propósito — cita
+  IPs de laboratorio y datos privados; NO publicar): repo esencialmente limpio. Sin
+  IPs públicas, sin credenciales/tokens, sin nombre/email reales (commits van con el
+  seudónimo `kadenas <discordante@gmail.com>`), `config.json` nunca commiteado y en
+  .gitignore, sin rutas /home ni MACs. Pendiente de limpieza cosmética (BAJA): IPs
+  privadas que parecen equipos reales del lab (`192.168.0.137`, `192.168.0.128`) en
+  HANDOFF/server.go/index.html; teléfonos ES `600100100`/`910200200`; ver §2-§4 del informe.
+- ACLARACIÓN AL USUARIO (no es bug): al crear un agente con BIND IP = IP del SBC
+  (`10.1.56.3`) sale "bind: cannot assign requested address". Correcto: BIND IP es la
+  IP LOCAL de escucha (`net.ListenPacket` en agent.go:352), debe ser una IP del propio
+  PC (`192.168.0.137`/`127.0.0.1`/`0.0.0.0`). Para hablar con un PBX/SBC remoto: agente
+  bindeado a la IP local y (a) llamar poniendo el SBC en PLACE CALL → TARGET URI manual
+  `sip:B@10.1.56.3:5060`, o (b) monitorizarlo en panel 04 TRUNKS/OPTIONS (FROM AGENT +
+  HOST remoto + PORT). Ojo: PC y SBC en subredes distintas → hace falta ruta IP real.
+- PRÓXIMO (acordado, pendiente):
+  1. Captura/GIF de la interfaz → `docs/screenshot.png` y descomentar la imagen en
+     README.md y README.es.md (el usuario prefiere capturarla él o dirigir su Chrome).
+  2. `git push` al remoto (hay commits locales sin subir: e12104a, 89c1d14, 5d94f80,
+     y este de HANDOFF).
+  3. Docs internas (FICHA_TECNICA/SCENARIO_FORMAT/DESPLIEGUE/HANDOFF) siguen en español;
+     valorar traducir al menos FICHA_TECNICA si se busca alcance internacional.
+  4. Limpieza cosmética de IPs/teléfonos del §2-§4 de AUDITORIA.md (opcional, BAJA).
+  5. Candidatos técnicos de antes siguen abiertos: CANCEL al colgar en ring; ordenar/
+     filtrar/exportar trazas; PAI/Diversion en traza; HOLD desde UAS; partir webui/
+     server.go; tests de control/webui; data race de sipgo v1.4.0 con -race.
 
 ## Sesión 20 — Documentación: sincronizar FICHA_TECNICA con el estado real (limpieza pre-presentación)
 - OBJETIVO: dejar la documentación "limpita" para presentar el proyecto. El README
