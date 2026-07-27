@@ -45,6 +45,10 @@ web UI** instead of an ncurses screen.
   numbering (in the From and in the To/Request-URI), ready to route by number in
   your SBC or PBX; if the load uses a scenario, those numbers override its
   `{caller}` and `{callee}` variables.
+- **Reusable destinations**: add your SBC or PBX once (name, IP, port, transport
+  and To domain) and then pick it from a dropdown to place calls, run scenarios
+  or start a load test — no need to retype the URI. The catalog is stored in
+  `config.json`, so it is still there after a restart.
 - **Monitor trunks** with OPTIONS: status, response code and RTT of each trunk,
   with a configurable failure threshold.
 - **See what goes over the wire**: an SBC-style trace viewer with every call
@@ -55,7 +59,7 @@ web UI** instead of an ncurses screen.
   the same machine.
 
 Everything lives in the web UI, organized into 7 panels: AGENTS, PLACE CALL,
-CALLS, TRUNKS/OPTIONS, SIP TRACE, SCENARIOS and LOAD TEST.
+CALLS, TRUNKS/DESTINATIONS, SIP TRACE, SCENARIOS and LOAD TEST.
 
 ## Screenshots
 
@@ -136,8 +140,10 @@ go run . --config config.json
 ```
 
 `config.json` is kept out of the repository on purpose: it usually holds
-internal IPs. In `web` mode, agents and trunks are created from the UI itself
-(state lives in memory while the app runs).
+internal IPs. In `web` mode it stores the **destination catalog** (whatever you
+add in the TRUNKS/DESTINATIONS panel): that is the only thing that survives a
+restart. Agents, and which agent monitors what, live in memory while the app
+runs.
 
 ## Scenarios
 

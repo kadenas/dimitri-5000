@@ -46,7 +46,16 @@ func NewStore(path string) (*Store, error) {
 	return &Store{path: path, cfg: cfg}, nil
 }
 
-// Path devuelve la ruta del fichero de configuración.
+// NewMemoryStore crea un Store SIN respaldo en disco: los cambios valen mientras la
+// app corre, pero no se guardan. Es el modo degradado para cuando el config.json no
+// se puede leer (corrupto o sin permisos): preferimos una web que funcione entera —
+// con su catálogo de destinos— a una a medias, y sobre todo NO machacar el fichero
+// del usuario con nuestros valores por defecto.
+func NewMemoryStore() *Store {
+	return &Store{cfg: defaults()} // path vacío = persistLocked no escribe nada
+}
+
+// Path devuelve la ruta del fichero de configuración (vacía si es solo memoria).
 func (s *Store) Path() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -66,6 +75,19 @@ func (s *Store) Targets() []Target {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return cloneTargets(s.cfg.Targets)
+}
+
+// Target busca un trunk por id. Devuelve (copia, true) si existe. Es la vía que usa
+// la web para resolver un destino elegido en un desplegable a su host/puerto reales.
+func (s *Store) Target(id string) (Target, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, t := range s.cfg.Targets {
+		if t.ID == id {
+			return t, true
+		}
+	}
+	return Target{}, false
 }
 
 // AddTarget valida y añade un trunk nuevo (id único) y persiste. Devuelve error si
@@ -116,8 +138,12 @@ func (s *Store) SetSignaling(bindIP string, sipPort int, transport string) error
 	return s.persistLocked()
 }
 
-// persistLocked guarda en disco. Debe llamarse con el mutex ya tomado.
+// persistLocked guarda en disco. Debe llamarse con el mutex ya tomado. Sin ruta
+// (Store solo de memoria) no hay nada que escribir y no es un error.
 func (s *Store) persistLocked() error {
+	if s.path == "" {
+		return nil
+	}
 	return Save(s.path, s.cfg)
 }
 

@@ -58,7 +58,8 @@ contenido y no se desparrama por el proyecto.
 ```
 main.go                 Arranque: lee config/flags, cablea módulos, parada limpia.
 internal/
-  config/   Configuración (JSON) y persistencia del modo monitor.
+  config/   Configuración (JSON) y persistencia: ajustes del modo monitor y
+            catálogo de destinos remotos del modo web.
   sipcore/  ÚNICA capa que habla con sipgo: UAC, UAS, transacciones, diálogos.
   agent/    Gestor de agentes: instancias SIP independientes (IP, puerto, conducta).
   control/  Orquestación de una llamada web (lanzar, colgar, HOLD/RESUME, REFER).
@@ -137,12 +138,15 @@ extremo a extremo desde la web:
   como plantilla de cada llamada en una prueba de carga.
 - **Pruebas de carga:** token-bucket de cps sin techo, N llamadas concurrentes, números
   A/B fijos, duración de llamada opcional y desglose de fallos por causa (PDD, canceladas).
+- **Catálogo de destinos:** los elementos remotos (SBC, centralitas, operadores) se dan
+  de alta una vez y se referencian por id desde llamadas, escenarios, carga y monitor.
 - **Monitor de troncales** por OPTIONS y **visor de trazas tipo SBC** con diagrama de
   escalera por llamada.
 - **Multi-agente:** varias instancias SIP independientes en la misma máquina.
 
-Nota: el estado del modo web (agentes, trunks) vive en memoria mientras la aplicación
-corre; solo el modo monitor persiste su configuración a disco.
+Nota: del modo web solo persiste a disco el **catálogo de destinos** (en el `config.json`,
+vía `config.Store`). Los agentes y la asignación de qué agente monitoriza qué destino
+viven en memoria mientras la aplicación corre.
 
 ## Plan por fases (todas completadas)
 

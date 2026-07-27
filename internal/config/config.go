@@ -15,13 +15,22 @@ import (
 	"time"
 )
 
-// Target representa una troncal / destino SIP a vigilar.
+// Target representa una troncal / destino SIP: un elemento remoto del laboratorio
+// (un SBC, una centralita, un operador) dado de alta UNA vez y reutilizable en
+// toda la aplicación: como diana del faro de OPTIONS y como destino de llamadas,
+// escenarios y pruebas de carga.
 type Target struct {
 	ID        string `json:"id"`        // identificador corto y único (ej: "trunk-operador")
 	Name      string `json:"name"`      // nombre legible para la interfaz
 	Host      string `json:"host"`      // IP o FQDN del destino
 	Port      int    `json:"port"`      // puerto SIP (típicamente 5060)
 	Transport string `json:"transport"` // "UDP" o "TCP" (en la v1, UDP)
+
+	// ToDomain es el dominio que llevará la cabecera To al llamar a este destino
+	// (vacío = se usa el propio Host). Muchos SBC enrutan por el dominio del To y
+	// no por la IP a la que se envía el paquete, así que guardarlo con el destino
+	// evita teclearlo en cada llamada. El faro lo ignora: OPTIONS no lo usa.
+	ToDomain string `json:"to_domain,omitempty"`
 }
 
 // Validate comprueba que un trunk tiene datos coherentes y normaliza el transporte
@@ -86,9 +95,10 @@ func defaults() Config {
 			TimeoutSeconds:  2,
 			FailThreshold:   3,
 		},
-		Targets: []Target{
-			{ID: "local", Name: "Centralita local", Host: "127.0.0.1", Port: 5060, Transport: "UDP"},
-		},
+		// Sin destinos por defecto: inventarse una troncal que el usuario no ha dado
+		// de alta ensucia el catálogo (aparecería un "127.0.0.1:5060" fantasma en la
+		// web nada más arrancar). El ejemplo vive en config.example.json.
+		Targets: nil,
 	}
 }
 

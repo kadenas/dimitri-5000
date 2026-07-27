@@ -49,15 +49,17 @@ type Server struct {
 	monitor      *monitor.Monitor // puede ser nil (modo sin faro)
 	manager      *agent.Manager   // puede ser nil (modo monitor sin agentes)
 	trace        *trace.Store     // puede ser nil (sin captura de traza)
+	dests        *config.Store    // catálogo de destinos; puede ser nil (modo monitor)
 	scenariosDir string           // carpeta de disco con los escenarios YAML
 	log          *slog.Logger
 }
 
-// New crea el servidor web (no lo arranca todavía). monitor, manager y trace son
-// opcionales: el modo monitor pasa manager=nil; el modo web pasa todos.
-// scenariosDir es la carpeta de donde se listan/cargan los escenarios.
-func New(addr string, m *monitor.Monitor, mgr *agent.Manager, tr *trace.Store, scenariosDir string, log *slog.Logger) *Server {
-	return &Server{addr: addr, monitor: m, manager: mgr, trace: tr, scenariosDir: scenariosDir, log: log}
+// New crea el servidor web (no lo arranca todavía). monitor, manager, trace y dests
+// son opcionales: el modo monitor pasa manager/dests=nil; el modo web pasa todos.
+// dests es el catálogo de destinos remotos (persistente); scenariosDir es la carpeta
+// de donde se listan/cargan los escenarios.
+func New(addr string, m *monitor.Monitor, mgr *agent.Manager, tr *trace.Store, dests *config.Store, scenariosDir string, log *slog.Logger) *Server {
+	return &Server{addr: addr, monitor: m, manager: mgr, trace: tr, dests: dests, scenariosDir: scenariosDir, log: log}
 }
 
 // Run arranca el servidor HTTP y lo detiene limpiamente cuando ctx se cancela.
@@ -70,8 +72,14 @@ func (s *Server) Run(ctx context.Context) error {
 	// API: información de red local (IPs detectadas) para sugerir el BIND IP.
 	mux.HandleFunc("/api/netinfo", s.handleNetInfo) // GET: {local_ip, ips}
 
-	// API de trunks por agente (modo web): lista global + alta/baja.
-	mux.HandleFunc("/api/trunks", s.handleTrunks)             // GET lista | POST alta
+	// API del catálogo de destinos remotos (SBC, centralitas): alta/baja/lista. Es
+	// global y persistente, y se referencia por 'dest_id' desde llamadas, escenarios
+	// y carga.
+	mux.HandleFunc("/api/destinations", s.handleDestinations)             // GET lista | POST alta
+	mux.HandleFunc("/api/destinations/remove", s.handleDestinationRemove) // POST {id}
+
+	// API de monitorización OPTIONS: qué agente sondea qué destino del catálogo.
+	mux.HandleFunc("/api/trunks", s.handleTrunks)             // GET estados | POST {agent_id, dest_id}
 	mux.HandleFunc("/api/trunks/remove", s.handleTrunkRemove) // POST {agent_id, id}
 
 	// API de agentes (instancias SIP).
@@ -191,7 +199,95 @@ func (s *Server) handleNetInfo(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, map[string]any{"local_ip": local, "ips": ips})
 }
 
-// --- Trunks por agente -------------------------------------------------------
+// --- Catálogo de destinos remotos --------------------------------------------
+
+// destReq es el cuerpo JSON para dar de alta un destino en el catálogo.
+type destReq struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Host      string `json:"host"`
+	Port      int    `json:"port"`
+	Transport string `json:"transport"`
+	ToDomain  string `json:"to_domain"`
+}
+
+// handleDestinations: GET el catálogo | POST alta de un destino (se persiste en el
+// config.json a través del Store).
+func (s *Server) handleDestinations(w http.ResponseWriter, r *http.Request) {
+	if s.dests == nil {
+		if r.Method == http.MethodGet {
+			s.writeJSON(w, []any{}) // modo monitor: sin catálogo, pero la web no falla
+			return
+		}
+		http.Error(w, "catálogo de destinos no disponible en este modo", http.StatusServiceUnavailable)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		s.writeJSON(w, s.dests.Targets())
+	case http.MethodPost:
+		var req destReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "JSON inválido", http.StatusBadRequest)
+			return
+		}
+		if req.Port == 0 {
+			req.Port = 5060 // puerto SIP por defecto: el caso habitual
+		}
+		t := config.Target{
+			ID: req.ID, Name: req.Name, Host: req.Host, Port: req.Port,
+			Transport: req.Transport, ToDomain: req.ToDomain,
+		}
+		// AddTarget valida (id/host/puerto/transporte) y persiste en disco.
+		if err := s.dests.AddTarget(t); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		s.writeJSON(w, map[string]string{"id": t.ID})
+	default:
+		http.Error(w, "usa GET o POST", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleDestinationRemove borra un destino del catálogo. Además lo retira de los
+// agentes que lo estuvieran monitorizando: dejar OPTIONS vivos contra un destino
+// que ya no existe en el catálogo sería tráfico fantasma imposible de parar desde
+// la interfaz.
+func (s *Server) handleDestinationRemove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "usa POST", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.dests == nil {
+		http.Error(w, "catálogo de destinos no disponible en este modo", http.StatusServiceUnavailable)
+		return
+	}
+	var req idReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID == "" {
+		http.Error(w, "JSON inválido: se requiere 'id'", http.StatusBadRequest)
+		return
+	}
+	borrado, err := s.dests.RemoveTarget(req.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !borrado {
+		http.Error(w, "destino no encontrado", http.StatusNotFound)
+		return
+	}
+	if s.manager != nil {
+		for _, info := range s.manager.Snapshot() {
+			if a := s.manager.Get(info.ID); a != nil {
+				a.RemoveTrunk(req.ID)
+			}
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Monitorización OPTIONS (qué agente sondea qué destino) -------------------
 
 // trunkView es el estado de un trunk etiquetado con el agente que lo monitoriza.
 type trunkView struct {
@@ -199,17 +295,16 @@ type trunkView struct {
 	monitor.TargetState
 }
 
-// trunkReq es el cuerpo JSON para dar de alta un trunk.
+// trunkReq pide que un agente empiece a monitorizar un destino DEL CATÁLOGO. No
+// lleva host ni puerto: el destino ya está dado de alta y se referencia por id, de
+// modo que cambiarlo en el catálogo no deja copias desincronizadas por ahí.
 type trunkReq struct {
-	AgentID   string `json:"agent_id"`
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Host      string `json:"host"`
-	Port      int    `json:"port"`
-	Transport string `json:"transport"`
+	AgentID string `json:"agent_id"`
+	DestID  string `json:"dest_id"`
 }
 
-// handleTrunks: GET lista (agregada de todos los agentes) | POST alta en un agente.
+// handleTrunks: GET estados (agregados de todos los agentes) | POST asigna la
+// monitorización de un destino a un agente.
 func (s *Server) handleTrunks(w http.ResponseWriter, r *http.Request) {
 	if s.manager == nil {
 		s.writeJSON(w, []any{})
@@ -239,16 +334,43 @@ func (s *Server) handleTrunks(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "agente no encontrado", http.StatusBadRequest)
 			return
 		}
-		t := config.Target{ID: req.ID, Name: req.Name, Host: req.Host, Port: req.Port, Transport: req.Transport}
+		t, ok := s.destByID(req.DestID)
+		if !ok {
+			http.Error(w, "destino no encontrado en el catálogo: "+req.DestID, http.StatusBadRequest)
+			return
+		}
 		if err := a.AddTrunk(t); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
-		s.writeJSON(w, map[string]string{"id": req.ID})
+		s.writeJSON(w, map[string]string{"id": t.ID})
 	default:
 		http.Error(w, "usa GET o POST", http.StatusMethodNotAllowed)
 	}
+}
+
+// destByID resuelve un id del catálogo a su destino. Devuelve false si no hay
+// catálogo (modo monitor) o el id no existe.
+func (s *Server) destByID(id string) (config.Target, bool) {
+	if s.dests == nil || id == "" {
+		return config.Target{}, false
+	}
+	return s.dests.Target(id)
+}
+
+// resolveDestID traduce el 'dest_id' de una petición al destino del catálogo. Un id
+// vacío no es error (destino manual: devuelve nil); un id que no existe SÍ lo es —
+// callar y llamar a otro sitio sería mucho peor que fallar.
+func (s *Server) resolveDestID(id string) (*config.Target, error) {
+	if id == "" {
+		return nil, nil
+	}
+	t, ok := s.destByID(id)
+	if !ok {
+		return nil, errors.New("destino no encontrado en el catálogo: " + id)
+	}
+	return &t, nil
 }
 
 // handleTrunkRemove quita un trunk de su agente.
@@ -481,6 +603,11 @@ type placeCallReq struct {
 
 	To string `json:"to"` // modo simple: destino como URI completa
 
+	// DestID referencia un destino del catálogo (panel DESTINATIONS). Es la vía
+	// cómoda: da el host, el puerto, el transporte y el dominio del To de una vez.
+	// Lo que se escriba a mano en los campos de abajo tiene prioridad sobre él.
+	DestID string `json:"dest_id"`
+
 	// Modo enriquecido (todos opcionales; si vienen, mandan sobre 'to').
 	DestHost    string            `json:"dest_host"`    // a dónde se envía (SBC o peer)
 	DestPort    int               `json:"dest_port"`    // puerto del destino real
@@ -521,7 +648,12 @@ func (s *Server) handlePlaceCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	spec, err := buildCallSpec(req)
+	dest, err := s.resolveDestID(req.DestID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	spec, err := buildCallSpec(req, dest)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -537,8 +669,14 @@ func (s *Server) handlePlaceCall(w http.ResponseWriter, r *http.Request) {
 }
 
 // buildCallSpec traduce la petición web a la especificación de llamada. El destino
-// real (DestHost:DestPort) sale de los campos enriquecidos o de parsear 'to'.
-func buildCallSpec(req placeCallReq) (control.CallSpec, error) {
+// real (DestHost:DestPort) sale, por este orden de prioridad: de los campos
+// enriquecidos escritos a mano, del destino del catálogo (dest, si se eligió uno) o
+// de parsear la URI simple 'to'.
+//
+// Que lo manual gane al catálogo es deliberado: la ficha del destino es la comodidad
+// del día a día, pero en una prueba puntual el usuario debe poder desviarse de ella
+// (mandar a otro puerto, cambiar el dominio del To) sin tener que editar el catálogo.
+func buildCallSpec(req placeCallReq, dest *config.Target) (control.CallSpec, error) {
 	inv := sipcore.RichInvite{
 		DestHost:    req.DestHost,
 		DestPort:    req.DestPort,
@@ -551,10 +689,28 @@ func buildCallSpec(req placeCallReq) (control.CallSpec, error) {
 		Headers:     req.Headers,
 	}
 
+	// Destino del catálogo: rellena solo los huecos que no venían en la petición.
+	if dest != nil {
+		if inv.DestHost == "" {
+			inv.DestHost = dest.Host
+			if inv.DestPort == 0 {
+				inv.DestPort = dest.Port
+			}
+		}
+		if inv.Transport == "" {
+			// config.Target guarda el transporte en mayúsculas ("UDP"); el núcleo SIP
+			// lo espera en minúsculas.
+			inv.Transport = strings.ToLower(dest.Transport)
+		}
+		if inv.ToDomain == "" {
+			inv.ToDomain = dest.ToDomain
+		}
+	}
+
 	// Si no se indicó destino explícito, lo tomamos de la URI simple 'to'.
 	if inv.DestHost == "" {
 		if req.To == "" {
-			return control.CallSpec{}, errors.New("indica un destino: 'to' (URI) o 'dest_host'")
+			return control.CallSpec{}, errors.New("indica un destino: 'dest_id' (catálogo), 'to' (URI) o 'dest_host'")
 		}
 		host, port, user, err := sipcore.SplitURI(req.To)
 		if err != nil {
@@ -570,7 +726,9 @@ func buildCallSpec(req placeCallReq) (control.CallSpec, error) {
 		inv.DestPort = 5060 // puerto SIP por defecto
 	}
 
-	// Texto a mostrar en la tabla de llamadas.
+	// Texto a mostrar en la tabla de llamadas. Si la llamada va contra un destino
+	// del catálogo, lo anteponemos: en una tabla con varias llamadas se lee mucho
+	// mejor "SBC1 · sip:910200200@..." que una IP suelta.
 	display := req.To
 	if display == "" {
 		if inv.ToUser != "" {
@@ -578,6 +736,9 @@ func buildCallSpec(req placeCallReq) (control.CallSpec, error) {
 		} else {
 			display = "sip:" + inv.DestHost
 		}
+	}
+	if dest != nil {
+		display = dest.ID + " · " + display
 	}
 
 	return control.CallSpec{Invite: inv, Hold: req.Hold, Display: display}, nil
@@ -596,7 +757,8 @@ type loadReq struct {
 	WithMedia  bool    `json:"with_media"` // enviar RTP en cada llamada
 	Scenario   string  `json:"scenario"`   // nombre del escenario UAC por llamada (vacío = INVITE básico)
 
-	// Destino (igual que PLACE CALL).
+	// Destino (igual que PLACE CALL): del catálogo por 'dest_id', o a mano.
+	DestID     string            `json:"dest_id"`
 	To         string            `json:"to"`
 	DestHost   string            `json:"dest_host"`
 	DestPort   int               `json:"dest_port"`
@@ -651,11 +813,16 @@ func (s *Server) handleLoadStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Reutilizamos buildCallSpec para fabricar el INVITE (mismo modelo que PLACE CALL).
+	dest, err := s.resolveDestID(req.DestID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	cs, err := buildCallSpec(placeCallReq{
 		To: req.To, DestHost: req.DestHost, DestPort: req.DestPort,
 		FromUser: req.FromUser, FromDomain: req.FromDomain,
 		ToUser: req.ToUser, ToDomain: req.ToDomain, PaiUser: req.PaiUser, Headers: req.Headers,
-	})
+	}, dest)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -792,6 +959,18 @@ type scenarioRunReq struct {
 	AgentID string `json:"agent_id"` // qué agente lo ejecuta (vacío = "default")
 	File    string `json:"file"`     // nombre del fichero dentro de la carpeta de escenarios
 	Target  string `json:"target"`   // destino (URI) para escenarios uac
+	DestID  string `json:"dest_id"`  // destino del catálogo (alternativa a escribir la URI)
+}
+
+// scenarioTargetURI construye el Request-URI de un escenario UAC a partir de un
+// destino del catálogo. Mismo criterio que el generador de carga: el paquete se
+// envía a host:puerto y el transporte viaja como parámetro de la URI.
+func scenarioTargetURI(t config.Target) string {
+	uri := "sip:" + t.Host + ":" + strconv.Itoa(t.Port)
+	if strings.EqualFold(t.Transport, "TCP") {
+		uri += ";transport=tcp"
+	}
+	return uri
 }
 
 // handleScenarioRun carga el escenario indicado y lo ejecuta en el agente elegido.
@@ -824,9 +1003,21 @@ func (s *Server) handleScenarioRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Destino del catálogo: si no se escribió una URI a mano, la construimos desde
+	// la ficha del destino elegido.
+	target := req.Target
+	dest, err := s.resolveDestID(req.DestID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if target == "" && dest != nil {
+		target = scenarioTargetURI(*dest)
+	}
+
 	// Un escenario UAC necesita un destino contra el que llamar.
-	if sc.Role == scenario.RoleUAC && req.Target == "" {
-		http.Error(w, "un escenario uac requiere 'target' (destino), p. ej. sip:192.168.1.10:5060", http.StatusBadRequest)
+	if sc.Role == scenario.RoleUAC && target == "" {
+		http.Error(w, "un escenario uac requiere un destino: 'dest_id' (catálogo) o 'target' (URI), p. ej. sip:192.0.2.10:5060", http.StatusBadRequest)
 		return
 	}
 
@@ -835,7 +1026,7 @@ func (s *Server) handleScenarioRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "agente no disponible o parado", http.StatusServiceUnavailable)
 		return
 	}
-	id := ctrl.RunScenario(sc, base, req.Target)
+	id := ctrl.RunScenario(sc, base, target)
 	s.writeJSON(w, map[string]string{"id": id})
 }
 

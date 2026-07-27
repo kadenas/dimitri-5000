@@ -13,14 +13,19 @@ const LABEL = {
 
 // Recordamos qué agente está elegido en PLACE CALL para no perderlo al refrescar.
 let selectedAgent = "default";   // agente que ORIGINA la llamada
-let selectedToAgent = "";        // agente DESTINO ("" = destino manual / externo)
-let selectedTrunkAgent = "default"; // agente que monitoriza el trunk a dar de alta
+// Los desplegables de DESTINO guardan un valor con prefijo: "dest:<id>" (destino
+// del catálogo) o "agent:<id>" (otro agente local). "" = manual / externo.
+let selectedCallDest = "";       // destino de PLACE CALL
+let selectedTrunkAgent = "default"; // agente que sondea con OPTIONS
+let selectedTrunkDest = "";           // destino del catálogo a monitorizar
 let selectedScenarioAgent = "default"; // agente que EJECUTA el escenario
 let selectedScenarioFile = "";        // fichero de escenario elegido en el desplegable
+let selectedScenarioDest = "";        // destino del escenario
 let selectedAudioAgent = "default";   // agente al que se sube el audio (RTP)
 let selectedLoadAgent = "default";    // agente que ORIGINA la prueba de carga
-let selectedLoadToAgent = "";         // agente DESTINO de la carga ("" = manual)
+let selectedLoadDest = "";            // destino de la carga
 let agentsCache = [];            // última lista de agentes (para resolver destino)
+let destsCache = [];             // catálogo de destinos remotos (SBC, centralitas)
 let uasScenariosCache = [];      // escenarios role uas disponibles (selector por agente)
 let selectedCall = "";           // Call-ID elegido en el ladder
 let showOptions = false;         // mostrar diálogos de OPTIONS (keepalive) en el ladder
@@ -195,10 +200,10 @@ function renderAgentSelector(datos) {
   }).join("");
   sel.value = selectedAgent;
 
-  // --- Destino (TO AGENT): a qué agente se llama. Primera opción = manual/externo ---
-  fillDestSelect("to-agent", selectedToAgent);
+  // --- Destino: a dónde se llama. Primera opción = manual/externo ---
+  fillDestSelect("call-dest", selectedCallDest);
 
-  // Selector del alta de trunks (mismo origen de agentes).
+  // Selector del agente que sondea con OPTIONS (mismo origen de agentes).
   const tr = document.getElementById("tr-agent");
   if (tr) {
     if (!ids.includes(selectedTrunkAgent)) selectedTrunkAgent = ids[0] || "default";
@@ -229,24 +234,135 @@ function renderAgentSelector(datos) {
     lo.innerHTML = sel.innerHTML;
     lo.value = selectedLoadAgent;
   }
-  // Selector del agente DESTINO de la carga (con opción manual).
-  fillDestSelect("load-to-agent", selectedLoadToAgent);
+  // Destinos de la carga y de los escenarios (mismo desplegable unificado).
+  fillDestSelect("load-dest", selectedLoadDest);
+  fillDestSelect("sc-dest", selectedScenarioDest);
 }
 
-// fillDestSelect rellena un desplegable de agente DESTINO (con opción manual).
+// fillDestSelect rellena un desplegable de DESTINO: los destinos del catálogo
+// (SBC, centralitas) y, aparte, los agentes locales para llamarse entre sí. El
+// valor lleva prefijo ("dest:" / "agent:") porque un mismo id podría existir en
+// los dos grupos y hay que saber de cuál se trata.
 function fillDestSelect(selId, current) {
   const dst = document.getElementById(selId);
   if (!dst) return;
-  const ids = agentsCache.map((a) => a.id);
-  if (current && !ids.includes(current)) current = "";
-  const opciones = ['<option value="">— manual / externo —</option>'].concat(
-    agentsCache.map((a) => {
+
+  const opciones = ['<option value="">— manual / externo —</option>'];
+  if (destsCache.length) {
+    opciones.push('<optgroup label="DESTINOS (catálogo)">');
+    destsCache.forEach((d) => {
+      const dirn = esc(d.host) + ":" + esc(d.port);
+      const nombre = d.name ? esc(d.id) + " · " + esc(d.name) : esc(d.id);
+      opciones.push('<option value="dest:' + esc(d.id) + '">' + nombre + " · " + dirn + "</option>");
+    });
+    opciones.push("</optgroup>");
+  }
+  if (agentsCache.length) {
+    opciones.push('<optgroup label="AGENTES LOCALES">');
+    agentsCache.forEach((a) => {
       const dirn = esc(a.bind_ip) + ":" + esc(a.sip_port);
-      return '<option value="' + esc(a.id) + '">' + esc(a.id) + " · " + dirn + "</option>";
-    })
-  );
+      opciones.push('<option value="agent:' + esc(a.id) + '">' + esc(a.id) + " · " + dirn + "</option>");
+    });
+    opciones.push("</optgroup>");
+  }
   dst.innerHTML = opciones.join("");
-  dst.value = current;
+
+  // Si el destino recordado ya no existe (se borró del catálogo, o el agente se
+  // dio de baja), el desplegable vuelve a "manual" en lugar de quedarse con un
+  // valor fantasma que luego el servidor rechazaría.
+  dst.value = current || "";
+  if (dst.value !== (current || "")) dst.value = "";
+}
+
+// destByValue traduce el valor de un desplegable de destino a datos concretos.
+// Devuelve null si el valor está vacío (destino manual) o ya no existe.
+function destByValue(value) {
+  if (!value) return null;
+  const sep = value.indexOf(":");
+  if (sep < 0) return null;
+  const kind = value.slice(0, sep);
+  const id = value.slice(sep + 1);
+  if (kind === "agent") {
+    const a = agentsCache.find((x) => x.id === id);
+    return a ? { kind, id, host: a.bind_ip, port: a.sip_port } : null;
+  }
+  if (kind === "dest") {
+    const d = destsCache.find((x) => x.id === id);
+    return d ? { kind, id, host: d.host, port: d.port } : null;
+  }
+  return null;
+}
+
+// destPayload vuelca el destino elegido en el cuerpo de la petición. Un destino del
+// catálogo viaja como 'dest_id' y lo resuelve el servidor (de su ficha salen host,
+// puerto, transporte y dominio del To); un agente local va como host + puerto.
+function destPayload(value) {
+  const d = destByValue(value);
+  if (!d) return {};
+  if (d.kind === "dest") return { dest_id: d.id };
+  return { dest_host: d.host, dest_port: d.port };
+}
+
+// destUri es la URI que se vuelca en el campo TARGET URI al elegir un destino:
+// informativa, para ver de un vistazo a dónde va a salir el paquete.
+function destUri(value) {
+  const d = destByValue(value);
+  return d ? "sip:" + d.host + ":" + d.port : "";
+}
+
+// renderDests pinta el catálogo de destinos y engancha sus botones de baja.
+function renderDests(datos) {
+  destsCache = datos || [];
+  const tbody = document.getElementById("dests");
+  if (!tbody) return;
+  if (destsCache.length === 0) {
+    tbody.innerHTML = '<tr class="empty"><td colspan="7">NO DESTINATIONS</td></tr>';
+  } else {
+    tbody.innerHTML = destsCache.map((d) =>
+      "<tr>" +
+      "<td>" + esc(d.id) + "</td>" +
+      "<td>" + esc(d.name || "—") + "</td>" +
+      "<td>" + esc(d.host) + "</td>" +
+      "<td>" + esc(d.port) + "</td>" +
+      "<td>" + esc(d.transport || "UDP") + "</td>" +
+      "<td>" + esc(d.to_domain || "—") + "</td>" +
+      '<td class="right"><button class="btn-mini danger" data-dest="' + esc(d.id) + '">DELETE</button></td>' +
+      "</tr>"
+    ).join("");
+
+    tbody.querySelectorAll(".btn-mini[data-dest]").forEach((b) => {
+      b.addEventListener("click", async () => {
+        const hint = document.getElementById("dest-hint");
+        try {
+          const res = await fetch("/api/destinations/remove", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: b.dataset.dest }),
+          });
+          if (!res.ok) throw new Error(await res.text());
+          hint.textContent = "Destino borrado: " + b.dataset.dest;
+          hint.className = "hint";
+          refresh();
+        } catch (e) {
+          hint.textContent = "Error: " + e.message;
+          hint.className = "hint error";
+        }
+      });
+    });
+  }
+
+  // Desplegable del alta de monitorización: solo destinos del catálogo (un agente
+  // no se monitoriza a sí mismo con OPTIONS desde este panel).
+  const tr = document.getElementById("tr-dest");
+  if (tr) {
+    tr.innerHTML = destsCache.length
+      ? destsCache.map((d) =>
+          '<option value="' + esc(d.id) + '">' + esc(d.id) + " · " +
+          esc(d.host) + ":" + esc(d.port) + "</option>").join("")
+      : '<option value="">— sin destinos —</option>';
+    tr.value = selectedTrunkDest || (destsCache[0] ? destsCache[0].id : "");
+    selectedTrunkDest = tr.value;
+  }
 }
 
 // Resume las métricas de media (RTP) de una llamada en una celda compacta:
@@ -573,15 +689,18 @@ function renderScenarioRuns(datos) {
 async function refresh() {
   const conn = document.getElementById("conn");
   try {
-    const [agents, calls, trunks, scenarioRuns, audio, loadStats] = await Promise.all([
+    const [agents, calls, dests, trunks, scenarioRuns, audio, loadStats] = await Promise.all([
       fetch("/api/agents").then((r) => r.json()),
       fetch("/api/calls").then((r) => r.json()),
+      fetch("/api/destinations").then((r) => r.json()),
       fetch("/api/trunks").then((r) => r.json()),
       fetch("/api/scenarios/runs").then((r) => r.json()),
       fetch("/api/media").then((r) => r.json()),
       fetch("/api/load").then((r) => r.json()),
     ]);
     renderAgents(agents);
+    // El catálogo se pinta ANTES que los selectores: estos incluyen sus destinos.
+    renderDests(dests);
     renderAgentSelector(agents);
     renderCalls(calls);
     renderTrunks(trunks);
@@ -610,12 +729,12 @@ document.getElementById("call-agent").addEventListener("change", (ev) => {
   selectedAgent = ev.target.value;
 });
 
-// Recordar el agente destino elegido al cambiarlo y, de paso, volcar su IP:puerto
-// al campo TARGET URI (visible y editable) para no teclearlo a mano.
-document.getElementById("to-agent").addEventListener("change", (ev) => {
-  selectedToAgent = ev.target.value;
-  const a = agentsCache.find((x) => x.id === selectedToAgent);
-  if (a) document.getElementById("to").value = "sip:" + a.bind_ip + ":" + a.sip_port;
+// Recordar el destino elegido al cambiarlo y, de paso, volcar su IP:puerto al
+// campo TARGET URI (visible y editable) para no teclearlo a mano.
+document.getElementById("call-dest").addEventListener("change", (ev) => {
+  selectedCallDest = ev.target.value;
+  const uri = destUri(selectedCallDest);
+  if (uri) document.getElementById("to").value = uri;
 });
 
 // Mostrar/ocultar el bloque de valores SIP avanzados.
@@ -630,34 +749,33 @@ document.getElementById("call-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const hint = document.getElementById("form-hint");
   const agentId = document.getElementById("call-agent").value || "default";
-  const toAgentId = document.getElementById("to-agent").value;
+  const destSel = document.getElementById("call-dest").value;
+  const elegido = destByValue(destSel); // destino del desplegable (catálogo o agente)
   const to = val("to");
-  let destHost = val("dest-host");
-  let destPort = parseInt(val("dest-port"), 10) || 0;
-
-  // Si se eligió un AGENTE DESTINO, su IP:puerto manda sobre lo manual.
-  const toAgent = agentsCache.find((a) => a.id === toAgentId);
-  if (toAgent) {
-    destHost = toAgent.bind_ip;
-    destPort = toAgent.sip_port;
-  }
+  const destHost = val("dest-host");
+  const destPort = parseInt(val("dest-port"), 10) || 0;
 
   const hold = parseInt(document.getElementById("hold").value, 10) || 0;
 
-  // Hace falta un destino: agente destino, DEST HOST (SBC) o la URI simple.
-  if (!toAgent && !to && !destHost) {
-    hint.textContent = "Elige un TO AGENT, o indica DEST HOST / TARGET URI.";
+  // Hace falta un destino: el desplegable, DEST HOST (SBC) o la URI simple.
+  if (!elegido && !to && !destHost) {
+    hint.textContent = "Elige un DESTINATION, o indica DEST HOST / TARGET URI.";
     hint.className = "hint error";
     return;
   }
 
+  // Si hay destino en el desplegable, es EL destino: no mandamos ni la URI ni el
+  // DEST HOST manual. El bloque de valores SIP está plegado y podría llevar un
+  // host viejo de otra prueba; que decidiera él a dónde va la llamada sería una
+  // trampa difícil de ver.
+  const destino = elegido
+    ? destPayload(destSel)
+    : { to, dest_host: destHost, dest_port: destPort };
+
   const payload = {
     agent_id: agentId,
     hold,
-    // Si hay agente destino o dest host, no mandamos 'to' para que prevalezca el destino.
-    to: toAgent || destHost ? "" : to,
-    dest_host: destHost,
-    dest_port: destPort,
+    ...destino,
     from_user: val("from-user"),
     from_domain: val("from-domain"),
     from_display: val("from-display"),
@@ -709,23 +827,61 @@ document.getElementById("agent-form").addEventListener("submit", async (ev) => {
   }
 });
 
-// Alta de un trunk remoto en el agente elegido.
+// ---- Catálogo de destinos ----
+
+// Alta de un destino en el catálogo (se persiste en el config.json del servidor).
+document.getElementById("dest-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const hint = document.getElementById("dest-hint");
+  const payload = {
+    id: val("dst-id"),
+    name: val("dst-name"),
+    host: val("dst-host"),
+    port: parseInt(val("dst-port"), 10) || 0,
+    transport: document.getElementById("dst-transport").value,
+    to_domain: val("dst-todomain"),
+  };
+  if (!payload.id || !payload.host) {
+    hint.textContent = "Indica al menos ID y HOST (el puerto por defecto es 5060).";
+    hint.className = "hint error";
+    return;
+  }
+  try {
+    const res = await fetch("/api/destinations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    hint.textContent = "Destino guardado: " + payload.id + " (ya disponible en PLACE CALL, SCENARIOS y LOAD TEST).";
+    hint.className = "hint";
+    ["dst-id", "dst-name", "dst-host", "dst-port", "dst-todomain"].forEach((id) => {
+      document.getElementById(id).value = "";
+    });
+    refresh();
+  } catch (e) {
+    hint.textContent = "Error: " + e.message;
+    hint.className = "hint error";
+  }
+});
+
+// Alta de monitorización: el agente elegido empieza a sondear con OPTIONS un
+// destino del catálogo.
 document.getElementById("tr-agent").addEventListener("change", (ev) => {
   selectedTrunkAgent = ev.target.value;
+});
+document.getElementById("tr-dest").addEventListener("change", (ev) => {
+  selectedTrunkDest = ev.target.value;
 });
 document.getElementById("trunk-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const hint = document.getElementById("trunk-hint");
   const payload = {
     agent_id: document.getElementById("tr-agent").value || "default",
-    id: val("tr-id"),
-    name: val("tr-name"),
-    host: val("tr-host"),
-    port: parseInt(val("tr-port"), 10) || 0,
-    transport: document.getElementById("tr-transport").value,
+    dest_id: document.getElementById("tr-dest").value,
   };
-  if (!payload.id || !payload.host || !payload.port) {
-    hint.textContent = "Indica al menos id, host y puerto.";
+  if (!payload.dest_id) {
+    hint.textContent = "Primero da de alta un destino en el catálogo.";
     hint.className = "hint error";
     return;
   }
@@ -736,11 +892,8 @@ document.getElementById("trunk-form").addEventListener("submit", async (ev) => {
       body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error(await res.text());
-    hint.textContent = "Trunk añadido: " + payload.id;
+    hint.textContent = "Monitorizando " + payload.dest_id + " desde " + payload.agent_id + ".";
     hint.className = "hint";
-    document.getElementById("tr-id").value = "";
-    document.getElementById("tr-host").value = "";
-    document.getElementById("tr-port").value = "";
     refresh();
   } catch (e) {
     hint.textContent = "Error: " + e.message;
@@ -809,13 +962,23 @@ document.getElementById("sc-agent").addEventListener("change", (ev) => {
 document.getElementById("sc-file").addEventListener("change", (ev) => {
   selectedScenarioFile = ev.target.value;
 });
+document.getElementById("sc-dest").addEventListener("change", (ev) => {
+  selectedScenarioDest = ev.target.value;
+  const uri = destUri(selectedScenarioDest);
+  if (uri) document.getElementById("sc-target").value = uri;
+});
 document.getElementById("sc-reload").addEventListener("click", loadScenarios);
 document.getElementById("scenario-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const hint = document.getElementById("scenario-hint");
   const agentId = document.getElementById("sc-agent").value || "default";
   const file = document.getElementById("sc-file").value;
-  const target = val("sc-target");
+  const destSel = document.getElementById("sc-dest").value;
+  const elegido = destByValue(destSel);
+  // Un destino del catálogo viaja por id (el servidor arma el Request-URI); si no
+  // hay ninguno elegido, vale la URI escrita a mano.
+  const target = elegido && elegido.kind === "dest" ? "" : val("sc-target");
+  const destId = elegido && elegido.kind === "dest" ? elegido.id : "";
   if (!file) {
     hint.textContent = "No hay escenario seleccionado.";
     hint.className = "hint error";
@@ -825,7 +988,7 @@ document.getElementById("scenario-form").addEventListener("submit", async (ev) =
     const res = await fetch("/api/scenarios/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agent_id: agentId, file, target }),
+      body: JSON.stringify({ agent_id: agentId, file, target, dest_id: destId }),
     });
     if (!res.ok) throw new Error(await res.text());
     const r = await res.json();
@@ -1007,32 +1170,28 @@ document.getElementById("load-agent").addEventListener("change", (ev) => {
   renderLoad(loadCache);
 });
 
-// Al elegir un agente destino, volcamos su IP:puerto al TARGET URI (visible).
-document.getElementById("load-to-agent").addEventListener("change", (ev) => {
-  selectedLoadToAgent = ev.target.value;
-  const a = agentsCache.find((x) => x.id === selectedLoadToAgent);
-  if (a) document.getElementById("load-to").value = "sip:" + a.bind_ip + ":" + a.sip_port;
+// Al elegir un destino, volcamos su IP:puerto al TARGET URI (visible).
+document.getElementById("load-dest").addEventListener("change", (ev) => {
+  selectedLoadDest = ev.target.value;
+  const uri = destUri(selectedLoadDest);
+  if (uri) document.getElementById("load-to").value = uri;
 });
 
 document.getElementById("load-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const hint = document.getElementById("load-hint");
   const agentId = document.getElementById("load-agent").value || "default";
-  const toAgentId = document.getElementById("load-to-agent").value;
+  const destSel = document.getElementById("load-dest").value;
+  const elegido = destByValue(destSel);
   const to = val("load-to");
 
-  let destHost = "";
-  let destPort = 0;
-  const toAgent = agentsCache.find((a) => a.id === toAgentId);
-  if (toAgent) {
-    destHost = toAgent.bind_ip;
-    destPort = toAgent.sip_port;
-  }
-  if (!toAgent && !to) {
-    hint.textContent = "Elige un TO AGENT o indica un TARGET URI.";
+  if (!elegido && !to) {
+    hint.textContent = "Elige un DESTINATION o indica un TARGET URI.";
     hint.className = "hint error";
     return;
   }
+  // Igual que en PLACE CALL: el desplegable, si hay elección, es EL destino.
+  const destino = elegido ? destPayload(destSel) : { to };
 
   const payload = {
     agent_id: agentId,
@@ -1042,9 +1201,7 @@ document.getElementById("load-form").addEventListener("submit", async (ev) => {
     call_secs: parseFloat(val("load-dur")) || 0,
     with_media: document.getElementById("load-media").checked,
     scenario: document.getElementById("load-scenario").value || "",
-    to: toAgent ? "" : to,
-    dest_host: destHost,
-    dest_port: destPort,
+    ...destino,
     // Números A/B: identidades FIJAS de todas las llamadas de la prueba (el SBC
     // enruta por el número B; el A viaja en el From).
     from_user: val("load-from-user"),

@@ -47,6 +47,10 @@ tráfico controlado, pero con escenarios en **YAML legible** en vez de XML y una
   To/Request-URI), lista para enrutarla por número en tu SBC o PBX; si la
   carga usa un escenario, esos números pisan sus variables `{caller}` y
   `{callee}`.
+- **Destinos reutilizables**: da de alta tu SBC o tu centralita una vez (nombre,
+  IP, puerto, transporte y dominio del To) y elígelo luego en un desplegable
+  para llamar, ejecutar escenarios o lanzar carga, sin volver a teclear la URI.
+  El catálogo se guarda en el `config.json`, así que sigue ahí al reiniciar.
 - **Monitorizar troncales** con OPTIONS: estado, código de respuesta y RTT de
   cada trunk, con umbral de fallos configurable.
 - **Ver qué pasa por el cable**: visor de trazas tipo SBC con todas las
@@ -57,7 +61,7 @@ tráfico controlado, pero con escenarios en **YAML legible** en vez de XML y una
   dos extremos de una llamada en la misma máquina.
 
 Todo esto vive en la interfaz web, organizada en 7 paneles: AGENTS, PLACE
-CALL, CALLS, TRUNKS/OPTIONS, SIP TRACE, SCENARIOS y LOAD TEST.
+CALL, CALLS, TRUNKS/DESTINATIONS, SIP TRACE, SCENARIOS y LOAD TEST.
 
 ## Capturas
 
@@ -138,8 +142,10 @@ go run . --config config.json
 ```
 
 `config.json` está fuera del repositorio a propósito: suele contener IPs
-internas. En modo `web`, agentes y trunks se crean desde la propia interfaz
-(el estado vive en memoria mientras la aplicación corre).
+internas. En modo `web` se usa para guardar el **catálogo de destinos** (los
+que das de alta en el panel TRUNKS/DESTINATIONS): es lo único que persiste
+entre arranques. Los agentes y la asignación de quién monitoriza qué viven en
+memoria mientras la aplicación corre.
 
 ## Escenarios
 

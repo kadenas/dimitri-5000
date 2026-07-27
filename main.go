@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log/slog"
 	"os"
@@ -61,8 +62,18 @@ func main() {
 	// --- 2. Cargar configuración -------------------------------------------
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
-		log.Error("no se pudo cargar la configuración", "error", err)
-		os.Exit(1)
+		// Que el fichero NO exista todavía no es un error: se arranca con los valores
+		// por defecto y se creará en cuanto se guarde algo desde la web (por ejemplo,
+		// el primer destino del catálogo). Cualquier otro fallo (JSON corrupto, sin
+		// permisos) sí aborta: seguir con una configuración distinta de la que el
+		// usuario cree tener es peor que no arrancar.
+		if errors.Is(err, os.ErrNotExist) {
+			log.Info("el fichero de configuración no existe todavía; se usarán los valores por defecto",
+				"fichero", *cfgPath)
+		} else {
+			log.Error("no se pudo cargar la configuración", "error", err)
+			os.Exit(1)
+		}
 	}
 
 	// --- 3. Resolver IP, puerto y transporte de señalización ---------------
@@ -122,7 +133,7 @@ func main() {
 	case "scenario":
 		runScenario(ctx, core, resolvedIP, resolvedPort, resolvedTransport, *scenarioFile, *to, log)
 	case "web":
-		runWeb(ctx, core, cfg, *webAddr, resolvedIP, resolvedPort, resolvedTransport, resolvedFromDomain, *scenariosDir, log)
+		runWeb(ctx, core, cfg, *cfgPath, *webAddr, resolvedIP, resolvedPort, resolvedTransport, resolvedFromDomain, *scenariosDir, log)
 	default:
 		log.Error("modo desconocido", "mode", *mode, "válidos", "monitor|uas|uac")
 		os.Exit(2)
@@ -173,7 +184,7 @@ func runMonitor(ctx context.Context, core *sipcore.Core, cfg config.Config, webA
 	farol.Start(ctx)
 	log.Info("faro iniciado", "troncales", len(cfg.Targets), "sip", addr)
 
-	srv := webui.New(webAddr, farol, nil, nil, scenariosDir, log) // modo monitor: sin agentes ni traza
+	srv := webui.New(webAddr, farol, nil, nil, nil, scenariosDir, log) // modo monitor: sin agentes, traza ni catálogo
 	log.Info("interfaz web disponible", "url", "http://"+webAddr)
 	if err := srv.Run(ctx); err != nil {
 		log.Error("la interfaz web terminó con error", "error", err)
@@ -185,8 +196,20 @@ func runMonitor(ctx context.Context, core *sipcore.Core, cfg config.Config, webA
 // agentes: aquí creamos UN agente por defecto que ADOPTA el Core ya montado (mismo
 // comportamiento que antes), dejando la puerta abierta a añadir más agentes en
 // caliente desde la web (G2).
-func runWeb(ctx context.Context, core *sipcore.Core, cfg config.Config, webAddr, ip string, port int, transport, fromDomain, scenariosDir string, log *slog.Logger) {
+func runWeb(ctx context.Context, core *sipcore.Core, cfg config.Config, cfgPath, webAddr, ip string, port int, transport, fromDomain, scenariosDir string, log *slog.Logger) {
 	addr := joinHostPort(ip, port) // dirección SIP (solo para el log informativo)
+
+	// Catálogo de destinos (SBC, centralitas, operadores): vive en el config.json y
+	// es lo ÚNICO que persiste del modo web. Los agentes siguen siendo en memoria,
+	// así que al reiniciar tendrás tus destinos pero habrá que recrear los agentes.
+	// Si el fichero no existe, el primer alta desde la web lo crea.
+	store, err := config.NewStore(cfgPath)
+	if err != nil {
+		// No es motivo para no arrancar ni para machacar el fichero: la web funciona
+		// igual, solo que los destinos que des de alta no sobrevivirán al reinicio.
+		log.Warn("no se pudo leer el catálogo de destinos: seguirá solo en memoria", "error", err)
+		store = config.NewMemoryStore()
+	}
 
 	// Gestor de agentes con un agente por defecto que adopta el Core actual. Los
 	// agentes heredan los parámetros de monitorización para sus trunks.
@@ -215,11 +238,14 @@ func runWeb(ctx context.Context, core *sipcore.Core, cfg config.Config, webAddr,
 	tracer := trace.NewStore(2000)
 	sipcore.EnableTracing(tracer.Record)
 
-	// En modo web la monitorización es POR AGENTE (cada agente tiene sus trunks),
-	// así que no hay faro global: se pasa nil.
-	srv := webui.New(webAddr, nil, mgr, tracer, scenariosDir, log)
+	// En modo web la monitorización es POR AGENTE (cada agente sondea los destinos
+	// que se le asignen), así que no hay faro global: se pasa nil.
+	srv := webui.New(webAddr, nil, mgr, tracer, store, scenariosDir, log)
 	logWebURLs(webAddr, ip, log)
 	log.Info("motor SIP", "sip", addr, "transport", transport)
+	if p := store.Path(); p != "" {
+		log.Info("catálogo de destinos", "fichero", p, "destinos", len(store.Targets()))
+	}
 	if err := srv.Run(ctx); err != nil {
 		log.Error("la interfaz web terminó con error", "error", err)
 	}

@@ -109,6 +109,20 @@ main { padding: 24px 28px 60px; width: 100%; max-width: 1280px; margin: auto; }
   font-weight: 700;
 }
 
+/* Subtítulo dentro de un bloque: separa dos tablas del mismo panel (catálogo de
+   destinos y su monitorización con OPTIONS) sin gastar un número de bloque. */
+.sub-title {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 700;
+  margin: 22px 0 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
 /* ---- Panel de control (lanzar llamada) ---- */
 .panel {
   background: var(--panel);
