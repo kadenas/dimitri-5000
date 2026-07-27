@@ -1,7 +1,62 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-07-27 (sesión 22: capturas en el README y publicación efectiva en GitHub)
+Fecha: 2026-07-27 (sesión 23: catálogo de destinos remotos, global y persistente)
+
+## Sesión 23 — Destinos remotos: catálogo global, persistente y reutilizable
+- PROBLEMA DETECTADO POR EL USUARIO: un "trunk" solo servía como diana del faro de
+  OPTIONS y pertenecía a UN agente (`agent.trunks`, alimentado a `monitor.New`).
+  Nadie más lo veía: para llamar a un SBC había que teclear su URI a mano en PLACE
+  CALL, en SCENARIOS y en LOAD TEST, una y otra vez, y nada de eso sobrevivía al
+  reinicio.
+- DECISIÓN (opción elegida por el usuario entre dos): el destino DEJA de pertenecer
+  al agente. Pasa a ser un catálogo GLOBAL y PERSISTENTE; la monitorización OPTIONS
+  se convierte en una asignación "el agente X sondea el destino Y". Se reutiliza
+  `config.Target` (ya lo consume el faro) y `config.Store` (ya valida, protege con
+  mutex y escribe atómicamente): cero paquetes nuevos.
+- CAMBIOS:
+  - `config`: `Target` gana `ToDomain` (dominio del To al llamar a ese destino; el
+    faro lo ignora). `Store` gana `Target(id)` (búsqueda) y `NewMemoryStore()`
+    (modo degradado sin disco). Se ELIMINA el destino de demo `local 127.0.0.1:5060`
+    de `defaults()`: aparecía como destino fantasma en el catálogo nada más arrancar.
+  - `main.go`: el modo web abre un `config.Store` (mismo `--config`, por defecto
+    `config.json`) y se lo pasa a la web. Además, que el fichero de configuración NO
+    exista ya no aborta el arranque (antes `--config nuevo.json` moría con "no such
+    file"): se arranca con valores por defecto y el fichero se crea al primer
+    guardado. Cualquier otro error (JSON corrupto, permisos) sigue abortando.
+  - `webui`: API nueva `GET/POST /api/destinations` y `POST /api/destinations/remove`
+    (la baja retira además la monitorización en todos los agentes, para no dejar
+    OPTIONS fantasma). `POST /api/trunks` ya no recibe host/puerto sino
+    `{agent_id, dest_id}`. `placeCallReq`, `loadReq` y `scenarioRunReq` ganan
+    `dest_id`. `buildCallSpec` recibe el destino resuelto y rellena host, puerto,
+    TRANSPORTE (que la web nunca fijaba: los trunks TCP no se resolvían bien) y
+    dominio del To. REGLA DE PRIORIDAD: lo tecleado a mano gana al catálogo.
+  - UI: el panel 04 pasa a ser TRUNKS/DESTINATIONS con dos tablas — el catálogo
+    (alta/baja) y, debajo, OPTIONS MONITOR (destino + agente que lo sondea). Los
+    desplegables de destino de PLACE CALL, SCENARIOS y LOAD TEST son ahora uno solo
+    con dos grupos: DESTINOS (catálogo) y AGENTES LOCALES; el valor lleva prefijo
+    `dest:`/`agent:`. Si hay destino elegido, NO se manda el DEST HOST manual (el
+    bloque va plegado y un host viejo desviaría la llamada sin que se note).
+- VERIFICADO: `go build`, `go vet` y `go test ./...` en verde. Tests nuevos:
+  `internal/webui/dest_test.go` (PRIMEROS tests de webui: resolución de destino,
+  prioridad de lo manual, URI de escenario) y dos casos de catálogo/persistencia en
+  `config`. Prueba funcional real con el binario (web en 127.0.0.1:8099, agente peer
+  en 5071): alta de destino → persiste en config.json; llamada SOLO con `dest_id` →
+  establecida con RTP y, en el cable, `INVITE sip:910200200@127.0.0.1:5071` con
+  `To: <sip:910200200@operador.com>` (el dominio salió de la ficha); carga con
+  `dest_id` → 3 concurrentes establecidas; escenario UAC con `dest_id` → ok;
+  `dest_id` inexistente → 400 con mensaje claro; borrado del destino → desaparece
+  del catálogo, del config.json y de la monitorización.
+- PENDIENTES QUE SIGUEN ABIERTOS:
+  1. Las capturas del README muestran el panel 04 antiguo (ahora tiene el catálogo):
+     recapturar cuando se quiera.
+  2. Persistir también los AGENTES (y con ellos las asignaciones de monitorización).
+     Hoy el catálogo sobrevive al reinicio pero hay que recrear los agentes.
+  3. Registro/autenticación contra el trunk (REGISTER, digest saliente): no existe.
+  4. Traducir `FICHA_TECNICA.md` y demás docs internas al inglés.
+  5. Candidatos técnicos de antes: CANCEL al colgar en ring; ordenar/filtrar/exportar
+     trazas; PAI/Diversion en la traza; HOLD desde UAS; partir `webui/server.go` (ya
+     por 1200 líneas); tests de `control/`; data race de sipgo v1.4.0 con `-race`.
 
 ## Sesión 22 — Capturas de la interfaz y repo ya publicado
 - ESTADO DE PARTIDA verificado al abrir: `origin/main` y `main` sincronizados (el
