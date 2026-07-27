@@ -1,7 +1,47 @@
 # HANDOFF
 
 ## Última actualización
-Fecha: 2026-07-24 (sesión 21: preparación open source — licencia, README bilingüe, auditoría de fugas)
+Fecha: 2026-07-27 (sesión 22: capturas en el README y publicación efectiva en GitHub)
+
+## Sesión 22 — Capturas de la interfaz y repo ya publicado
+- ESTADO DE PARTIDA verificado al abrir: `origin/main` y `main` sincronizados (el
+  `git push` que la sesión 21 dejaba como pendiente #2 YA estaba hecho). `go build
+  ./...` OK y toda la batería de tests en verde (agent, config, load, media,
+  monitor, runner, scenario, sipcore, trace; `control` y `webui` siguen sin tests).
+- CIERRE DEL PENDIENTE #1 (la captura de escaparate) — commit `ca9b498`:
+  - Nuevo directorio `docs/` con 5 capturas. Los ficheros originales llegaron con
+    un `(` inicial en el nombre, que ROMPE las URLs de Markdown en GitHub; se
+    renombraron a nombres limpios: `load-test.png`, `sip-trace.png`,
+    `agents-and-call.png`, `calls-and-trunks.png`, `scenarios-and-load.png`.
+  - PORTADA = `load-test.png` (carga en marcha: 50 concurrentes, PDD 0.29/1.16/
+    10.65 ms, 137.776 paquetes RTP). Criterio: es la única que demuestra de un
+    vistazo que la herramienta trabaja con números reales; el resto son
+    formularios vacíos y convencen menos.
+  - Sección "Screenshots"/"Capturas": `sip-trace.png` visible (escalera + INVITE
+    en crudo con SDP, la que convence a un ingeniero VoIP) y las otras tres en un
+    `<details>` plegado para no empujar el Quick start fuera de la primera pantalla.
+  - `README.md` y `README.es.md` quedan simétricos. Descomentados los bloques de
+    imagen que la sesión 21 dejó preparados.
+  - Descartadas por redundantes (borradas del disco, nunca commiteadas): la
+    segunda captura de agentes y una variante de la traza sin el panel de crudo.
+- DECISIÓN SOBRE LAS IPs DEL LAB: se avisó al usuario de que las capturas muestran
+  `192.168.0.137`/`192.168.0.128` —justo lo que el §2 de AUDITORIA.md marcaba como
+  pendiente de limpieza— y de que una imagen no se limpia con un `sed`. **El
+  usuario decidió publicar tal cual.** Correcto: son RFC 1918, no revelan nada
+  explotable desde fuera; era cuestión de imagen, no de seguridad. CONSECUENCIA: el
+  pendiente §2-§4 de la auditoría queda de facto CERRADO (limpiar el texto ya no
+  aporta si las capturas las muestran igual), salvo que algún día se recapture todo
+  con `127.0.0.1`/`192.0.2.x`.
+- El repo está publicado y completo en https://github.com/kadenas/dimitri-5000
+- PENDIENTES QUE SIGUEN ABIERTOS:
+  1. Traducir `FICHA_TECNICA.md` al inglés (las docs internas —FICHA_TECNICA,
+     SCENARIO_FORMAT, DESPLIEGUE, HANDOFF— siguen todas en español).
+  2. Candidatos técnicos, sin priorizar: CANCEL al colgar en ring; ordenar/filtrar/
+     exportar trazas; PAI/Diversion en la traza; HOLD desde el lado UAS; partir
+     `internal/webui/server.go` (está muy grande); tests de `control/` y `webui/`;
+     data race de sipgo v1.4.0 al correr con `-race`.
+  3. G2.1: si el puerto de un agente nuevo está ocupado, hoy queda 'running' aunque
+     Serve falle (bind asíncrono); detectar y reflejarlo en la UI.
 
 ## Sesión 21 — Publicación open source: licencia, README de escaparate y auditoría
 - OBJETIVO: dejar el repo listo para publicar en GitHub (reputación/contactos vía
