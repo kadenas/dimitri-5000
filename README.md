@@ -15,10 +15,9 @@ A modern alternative to **SIPp**: the same power to test VoIP with controlled
 traffic, but with **readable YAML** scenarios instead of XML and a **real-time
 web UI** instead of an ncurses screen.
 
-<!-- Recommended: a screenshot or GIF of the UI is what convinces a visitor
-     arriving from LinkedIn in the first few seconds. Save it under docs/ and uncomment:
-![dimitri-5000 UI](docs/screenshot.png)
--->
+![Load test running: 50 concurrent calls at 10 cps with live PDD and RTP counters](docs/load-test.png)
+
+<sub>A load test in flight: 50 concurrent calls, live PDD (INVITE→200 OK) and RTP packet counters.</sub>
 
 #### At a glance
 
@@ -57,6 +56,29 @@ web UI** instead of an ncurses screen.
 
 Everything lives in the web UI, organized into 7 panels: AGENTS, PLACE CALL,
 CALLS, TRUNKS/OPTIONS, SIP TRACE, SCENARIOS and LOAD TEST.
+
+## Screenshots
+
+**SIP trace** — every call, its ladder diagram and the raw message with its SDP:
+
+![SIP trace: call list, ladder diagram and raw INVITE with SDP](docs/sip-trace.png)
+
+<details>
+<summary><b>More screenshots</b> — agents, place call, trunks, scenarios</summary>
+
+**01 AGENTS · 02 PLACE CALL** — each agent is an independent SIP instance:
+
+![AGENTS and PLACE CALL panels](docs/agents-and-call.png)
+
+**03 CALLS · 04 TRUNKS/OPTIONS** — live calls with HOLD/RESUME/XFER, and trunk monitoring:
+
+![CALLS and TRUNKS panels](docs/calls-and-trunks.png)
+
+**06 SCENARIOS · 07 LOAD TEST** — run a YAML scenario, or drive it as load:
+
+![SCENARIOS and LOAD TEST panels](docs/scenarios-and-load.png)
+
+</details>
 
 ## Quick start
 

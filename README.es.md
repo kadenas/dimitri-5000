@@ -16,10 +16,9 @@ Una alternativa moderna a **SIPp**: la misma potencia para probar VoIP con
 tráfico controlado, pero con escenarios en **YAML legible** en vez de XML y una
 **web en tiempo real** en vez de una pantalla de ncurses.
 
-<!-- Recomendado: una captura o GIF de la interfaz es lo que más convence a quien
-     llega desde LinkedIn en los primeros segundos. Guárdala en docs/ y descomenta:
-![Interfaz de dimitri-5000](docs/screenshot.png)
--->
+![Prueba de carga en marcha: 50 llamadas concurrentes a 10 cps con PDD y contadores RTP en vivo](docs/load-test.png)
+
+<sub>Una prueba de carga en marcha: 50 llamadas concurrentes, PDD en vivo (INVITE→200 OK) y contadores de paquetes RTP.</sub>
 
 #### De un vistazo
 
@@ -59,6 +58,29 @@ tráfico controlado, pero con escenarios en **YAML legible** en vez de XML y una
 
 Todo esto vive en la interfaz web, organizada en 7 paneles: AGENTS, PLACE
 CALL, CALLS, TRUNKS/OPTIONS, SIP TRACE, SCENARIOS y LOAD TEST.
+
+## Capturas
+
+**Traza SIP** — cada llamada, su diagrama de escalera y el mensaje en crudo con su SDP:
+
+![Traza SIP: lista de llamadas, diagrama de escalera e INVITE en crudo con SDP](docs/sip-trace.png)
+
+<details>
+<summary><b>Más capturas</b> — agentes, lanzar llamada, troncales, escenarios</summary>
+
+**01 AGENTS · 02 PLACE CALL** — cada agente es una instancia SIP independiente:
+
+![Paneles AGENTS y PLACE CALL](docs/agents-and-call.png)
+
+**03 CALLS · 04 TRUNKS/OPTIONS** — llamadas en vivo con HOLD/RESUME/XFER y monitorización de troncales:
+
+![Paneles CALLS y TRUNKS](docs/calls-and-trunks.png)
+
+**06 SCENARIOS · 07 LOAD TEST** — lanza un escenario YAML o úsalo como carga:
+
+![Paneles SCENARIOS y LOAD TEST](docs/scenarios-and-load.png)
+
+</details>
 
 ## Arranque rápido
 
